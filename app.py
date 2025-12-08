@@ -46,20 +46,14 @@ def add_product(name, quantity, price):
     sheet = get_worksheet()
     if not sheet: return
 
-    # 讀取目前資料
-    data = sheet.get_all_records()
-    df = pd.DataFrame(data)
+    # 使用 findall 搜尋，找不到會回傳空清單，不會報錯
+    cell_list = sheet.findall(name)
     
-    # 檢查商品是否存在
-    # Google Sheets 的 row index 從 1 開始，header 是 row 1，所以資料從 row 2 開始
-    # gspread 尋找 cell 是回傳物件，找不到會報錯或需要邏輯處理
-    
-    try:
-        cell = sheet.find(name)
-        # 商品存在 -> 更新 (cell.row 是該商品所在的行數)
-        # 取得目前數量 (假設數量在第 2 欄，單價在第 3 欄)
-        # 注意：這裡依賴欄位順序：商品名稱(1), 數量(2), 單價(3)
+    if cell_list:
+        # 找到商品 -> 更新 (取第一個找到的結果)
+        cell = cell_list[0]
         
+        # 取得目前數量 (假設數量在第 2 欄)
         current_qty = int(sheet.cell(cell.row, 2).value)
         new_qty = current_qty + quantity
         
@@ -68,9 +62,8 @@ def add_product(name, quantity, price):
         sheet.update_cell(cell.row, 3, price)
         
         st.success(f"✅ 已更新 '{name}'。新庫存: {new_qty}, 最新單價: {price}")
-        
-    except gspread.exceptions.CellNotFound:
-        # 商品不存在 -> 新增一行
+    else:
+        # 沒找到商品 -> 新增一行
         sheet.append_row([name, quantity, price])
         st.success(f"🆕 已新增商品 '{name}'。庫存: {quantity}, 單價: {price}")
 
@@ -79,8 +72,11 @@ def sell_product(name, quantity):
     sheet = get_worksheet()
     if not sheet: return
 
-    try:
-        cell = sheet.find(name)
+    # 使用 findall 搜尋
+    cell_list = sheet.findall(name)
+    
+    if cell_list:
+        cell = cell_list[0]
         current_qty = int(sheet.cell(cell.row, 2).value)
         
         if current_qty >= quantity:
@@ -89,9 +85,9 @@ def sell_product(name, quantity):
             st.success(f"💰 成功售出 {quantity} 個 '{name}'。剩餘庫存: {new_qty}")
         else:
             st.error(f"❌ 庫存不足！'{name}' 目前只有 {current_qty} 個。")
-            
-    except gspread.exceptions.CellNotFound:
+    else:
         st.error(f"❌ 找不到商品 '{name}'。")
+
 
 # --- 網頁介面設計 ---
 
