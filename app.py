@@ -43,6 +43,12 @@ def upload_image_to_drive(uploaded_file):
     """
     將檔案上傳到指定的共用資料夾，解決空間不足問題。
     """
+
+    # 👇 加入這一行，讓它直接把目前的 ID 印在網頁上給你看
+    st.error(f"目前程式讀到的 ID 是: {DRIVE_FOLDER_ID}")
+
+
+    
     service = get_drive_service()
     if not service: return ""
 
