@@ -100,6 +100,30 @@ def delete_product(name):
     if cell_list:
         sheet.delete_rows(cell_list[0].row)
         st.success(f"🗑️ 已刪除")
+def update_product_info(name, new_qty, new_price, new_url):
+    """
+    全方位更新商品資料：數量、價格、圖片
+    """
+    sheet = get_worksheet()
+    if not sheet: return
+
+    clean_url = str(new_url).strip()
+    if len(clean_url) > 2000:
+        st.error("❌ 圖片連結太長，無法儲存。")
+        return
+
+    cell_list = sheet.findall(name)
+    if cell_list:
+        cell = cell_list[0]
+        # 批次更新比較快，也比較省 API 配額
+        # 假設欄位順序：商品名稱(1), 數量(2), 單價(3), 圖片連結(4)
+        sheet.update_cell(cell.row, 2, new_qty)
+        sheet.update_cell(cell.row, 3, new_price)
+        sheet.update_cell(cell.row, 4, clean_url)
+        
+        st.success(f"✅ 商品 '{name}' 資料已更新！")
+    else:
+        st.error(f"❌ 找不到商品 '{name}'")
 
 def update_product_image(name, new_url):
     sheet = get_worksheet()
@@ -262,20 +286,67 @@ with tab4:
     else:
         st.info("目前沒有商品可供刪除。")
         
+# Tab 5: 編輯資料 (全功能版)
 with tab5:
-    st.header("編輯")
+    st.header("✏️ 編輯商品資料")
+    df = get_inventory_df()
+    
     if not df.empty:
-        name = st.selectbox("編輯對象", df['商品名稱'].tolist(), key="es")
-        curr = str(df[df['商品名稱']==name].iloc[0].get('圖片連結','')).strip()
-        if curr: st.image(curr, width=150)
-        with st.form("upd"):
-            src = st.radio("來源", ["連結", "上傳"], horizontal=True)
-            url, file = "", None
-            if src == "連結": url = st.text_input("網址")
-            else: file = st.file_uploader("圖", type=['png','jpg'])
-            if st.form_submit_button("更新"):
-                if file:
-                    with st.spinner("上傳..."):
-                        u = upload_image_to_imgbb(file)
-                        if u: url = u
-                if url: update_product_image(name, url); st.rerun()
+        # 1. 選擇商品
+        edit_name = st.selectbox("請選擇要編輯的商品", df['商品名稱'].tolist(), key="edit_select_full")
+        
+        # 2. 取得目前資料 (作為預設值)
+        current_data = df[df['商品名稱'] == edit_name].iloc[0]
+        curr_qty = int(current_data['數量'])
+        curr_price = int(current_data['單價'])
+        curr_url = str(current_data.get('圖片連結', '')).strip()
+        
+        st.divider()
+        
+        # 3. 編輯表單
+        with st.form("edit_full_form"):
+            col_info, col_img_preview = st.columns([1, 1])
+            
+            with col_info:
+                st.subheader("📦 基本資訊")
+                new_qty = st.number_input("庫存數量", min_value=0, value=curr_qty, help="直接修改庫存數量")
+                new_price = st.number_input("商品單價", min_value=0, value=curr_price)
+            
+            with col_img_preview:
+                st.subheader("🖼️ 目前圖片")
+                if curr_url and len(curr_url) < 2000:
+                    st.image(curr_url, width=200)
+                else:
+                    st.info("尚無圖片")
+
+            st.subheader("📸 更新圖片 (選填)")
+            img_source_edit = st.radio("圖片來源：", ["保留原圖/貼上連結", "📤 上傳新圖片 (ImgBB)"], horizontal=True)
+            
+            new_url_input = st.text_input("圖片連結", value=curr_url)
+            new_file_upload = None
+            
+            if img_source_edit == "📤 上傳新圖片 (ImgBB)":
+                new_file_upload = st.file_uploader("上傳新圖片", type=['png', 'jpg', 'jpeg'])
+            
+            st.write("") # 排版空格
+            submitted_edit = st.form_submit_button("💾 儲存變更", type="primary", use_container_width=True)
+            
+            if submitted_edit:
+                final_url = new_url_input
+                
+                # 如果有上傳新圖，優先使用上傳的網址
+                if new_file_upload:
+                    with st.spinner("正在上傳新圖片..."):
+                        uploaded_link = upload_image_to_imgbb(new_file_upload)
+                        if uploaded_link:
+                            final_url = uploaded_link
+                        else:
+                            st.warning("圖片上傳失敗，將保留原本設定。")
+                
+                # 執行更新
+                with st.spinner("正在寫入資料庫..."):
+                    update_product_info(edit_name, new_qty, new_price, final_url)
+                    st.rerun() # 成功後刷新頁面
+
+    else:
+        st.info("目前沒有資料可供編輯。")
