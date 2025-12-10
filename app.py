@@ -9,8 +9,7 @@ from googleapiclient.http import MediaIoBaseUpload
 # --- 設定區 (請修改這裡！) ---
 SPREADSHEET_NAME = "inventory_system"
 # 👇 請將您的資料夾 ID 貼在引號裡面
-DRIVE_FOLDER_ID = "1twlNXMHi1YVnC68nkEwf7HRIYPBaIzhr" 
-
+DRIVE_FOLDER_ID = "1twlNXMHi1YVnC68nkEwf7HRIYPBaIzhr"
 # --- 連線設定 ---
 def get_worksheet():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
