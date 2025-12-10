@@ -48,7 +48,7 @@ def upload_image_to_drive(uploaded_file):
     if not service: return ""
 
     try:
-        if DRIVE_FOLDER_ID == "這裡填入您的資料夾ID" or not DRIVE_FOLDER_ID:
+        if DRIVE_FOLDER_ID == "1twlNXMHi1YVnC68nkEwf7HRIYPBaIzhr" or not DRIVE_FOLDER_ID:
             st.error("⚠️ 請先在程式碼中設定 DRIVE_FOLDER_ID (資料夾 ID)")
             return ""
 
