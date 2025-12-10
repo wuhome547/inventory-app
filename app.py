@@ -2,18 +2,20 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
 
-# --- 連線設定 ---
+# --- 連線設定：Google Sheets ---
 def get_worksheet():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     except Exception:
-        # 本地測試用 (若無 secrets 則報錯)
         st.error("❌ 無法讀取憑證，請檢查 .streamlit/secrets.toml 設定")
         return None
     client = gspread.authorize(creds)
@@ -24,15 +26,64 @@ def get_worksheet():
         st.error(f"❌ 找不到試算表 '{SPREADSHEET_NAME}'")
         return None
 
-# --- 輔助函數：處理圖片連結 ---
+# --- 連線設定：Google Drive (用於上傳圖片) ---
+def get_drive_service():
+    try:
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        # 使用 google.oauth2 建立 Drive API 專用的憑證
+        creds = service_account.Credentials.from_service_account_info(creds_dict)
+        service = build('drive', 'v3', credentials=creds)
+        return service
+    except Exception as e:
+        st.error(f"❌ Drive API 連線失敗: {e}")
+        return None
+
+def upload_image_to_drive(uploaded_file):
+    """
+    將上傳的檔案儲存到 Google Drive，並回傳可顯示的連結。
+    """
+    service = get_drive_service()
+    if not service: return ""
+
+    try:
+        # 1. 設定檔案資訊
+        file_metadata = {'name': uploaded_file.name}
+        
+        # 2. 建立媒體上傳物件
+        media = MediaIoBaseUpload(uploaded_file, mimetype=uploaded_file.type, resumable=True)
+        
+        # 3. 執行上傳
+        file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id'
+        ).execute()
+        
+        file_id = file.get('id')
+        
+        # 4. 設定權限為公開 (Anyone with link can view)
+        # 這是必須的，否則 Streamlit 網頁無法直接顯示圖片
+        user_permission = {
+            'type': 'anyone',
+            'role': 'reader',
+        }
+        service.permissions().create(
+            fileId=file_id,
+            body=user_permission,
+            fields='id',
+        ).execute()
+        
+        # 5. 回傳縮圖連結 (sz=w1000 代表寬度1000px)
+        return f"https://drive.google.com/thumbnail?id={file_id}&sz=w1000"
+
+    except Exception as e:
+        st.error(f"上傳圖片失敗: {e}")
+        return ""
+
+# --- 輔助函數 ---
 def process_image_url(url):
-    """
-    將 Google Drive 的分享連結轉換為可直接顯示的圖片連結。
-    """
     if not url: return ""
     url = str(url).strip()
-    
-    # 處理 Google Drive 連結
     if "drive.google.com" in url and "/d/" in url:
         try:
             file_id = url.split("/d/")[1].split("/")[0]
@@ -48,14 +99,12 @@ def get_inventory_df():
     if sheet:
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
-        # 確保有圖片連結欄位
         if '圖片連結' not in df.columns:
             df['圖片連結'] = ""
         return df
     return pd.DataFrame()
 
 def add_product(name, quantity, price, image_url):
-    """進貨 (若存在則更新數量/價格/圖片)"""
     sheet = get_worksheet()
     if not sheet: return
 
@@ -63,22 +112,20 @@ def add_product(name, quantity, price, image_url):
     cell_list = sheet.findall(name)
     
     if cell_list:
-        # 更新
         cell = cell_list[0]
         current_qty = int(sheet.cell(cell.row, 2).value)
         new_qty = current_qty + quantity
-        
         sheet.update_cell(cell.row, 2, new_qty)
         sheet.update_cell(cell.row, 3, price)
-        sheet.update_cell(cell.row, 4, final_img_url)
+        # 如果有新圖片才更新，否則保留原圖 (若輸入為空)
+        if final_img_url:
+            sheet.update_cell(cell.row, 4, final_img_url)
         st.success(f"✅ 已更新 '{name}'。")
     else:
-        # 新增
         sheet.append_row([name, quantity, price, final_img_url])
         st.success(f"🆕 已新增 '{name}'。")
 
 def sell_product(name, quantity):
-    """銷貨"""
     sheet = get_worksheet()
     if not sheet: return
     cell_list = sheet.findall(name)
@@ -95,7 +142,6 @@ def sell_product(name, quantity):
         st.error(f"❌ 找不到商品")
 
 def delete_product(name):
-    """刪除"""
     sheet = get_worksheet()
     if not sheet: return
     cell_list = sheet.findall(name)
@@ -106,15 +152,12 @@ def delete_product(name):
         st.error(f"❌ 找不到商品")
 
 def update_product_image(name, new_url):
-    """單獨更新商品圖片"""
     sheet = get_worksheet()
     if not sheet: return
-
     cell_list = sheet.findall(name)
     if cell_list:
         cell = cell_list[0]
         final_img_url = process_image_url(new_url)
-        # 更新第 4 欄 (圖片連結)
         sheet.update_cell(cell.row, 4, final_img_url)
         st.success(f"🖼️ 已更新 '{name}' 的圖片連結！")
     else:
@@ -125,10 +168,9 @@ def update_product_image(name, new_url):
 st.set_page_config(page_title="雲端進銷存(含圖)", layout="wide")
 st.title("☁️ 視覺化進銷存系統")
 
-# 定義 5 個分頁
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨", "➖ 銷貨", "❌ 刪除", "✏️ 編輯資料"])
 
-# Tab 1: 庫存圖牆 (無變動)
+# Tab 1: 庫存圖牆
 with tab1:
     st.header("庫存總覽")
     df = get_inventory_df()
@@ -160,7 +202,7 @@ with tab1:
         st.info("目前沒有資料。")
     if st.button("🔄 重新整理"): st.rerun()
 
-# Tab 2: 進貨 (無變動)
+# Tab 2: 進貨 (含上傳功能)
 with tab2:
     st.header("商品進貨")
     with st.form("add_form"):
@@ -168,14 +210,41 @@ with tab2:
         c1, c2 = st.columns(2)
         with c1: p_qty = st.number_input("進貨數量", 1, value=10)
         with c2: p_price = st.number_input("單價", 0, value=100)
-        p_img = st.text_input("圖片連結 (選填)")
-        if st.form_submit_button("確認"):
+        
+        st.write("---")
+        st.write("📸 商品圖片來源 (擇一)")
+        img_source = st.radio("選擇圖片上傳方式：", ["🔗 貼上連結", "📤 直接上傳圖片"], horizontal=True)
+        
+        p_img_url = ""
+        p_uploaded_file = None
+        
+        if img_source == "🔗 貼上連結":
+            p_img_url = st.text_input("圖片連結 (支援 Google Drive 分享連結)")
+        else:
+            p_uploaded_file = st.file_uploader("上傳圖片 (jpg, png)", type=['png', 'jpg', 'jpeg'])
+
+        submitted = st.form_submit_button("確認進貨 / 更新")
+        
+        if submitted:
             if p_name:
-                add_product(p_name, p_qty, p_price, p_img)
+                final_url = p_img_url
+                
+                # 若使用者選擇上傳圖片，優先處理上傳
+                if p_uploaded_file is not None:
+                    with st.spinner("正在上傳圖片至 Google Drive..."):
+                        drive_link = upload_image_to_drive(p_uploaded_file)
+                        if drive_link:
+                            final_url = drive_link
+                        else:
+                            st.error("圖片上傳失敗，請重試。")
+                            st.stop()
+                            
+                with st.spinner("寫入資料庫..."):
+                    add_product(p_name, p_qty, p_price, final_url)
             else:
                 st.warning("請輸入名稱")
 
-# Tab 3: 銷貨 (無變動)
+# Tab 3: 銷貨
 with tab3:
     st.header("商品銷貨")
     df = get_inventory_df()
@@ -188,7 +257,7 @@ with tab3:
     else:
         st.warning("無庫存")
 
-# Tab 4: 刪除 (無變動)
+# Tab 4: 刪除
 with tab4:
     st.header("刪除商品")
     df = get_inventory_df()
@@ -203,16 +272,13 @@ with tab4:
                 else:
                     st.error("請勾選確認")
 
-# Tab 5: 新增的編輯功能
+# Tab 5: 編輯資料 (含上傳功能)
 with tab5:
     st.header("✏️ 編輯商品資料")
     df = get_inventory_df()
     
     if not df.empty:
-        # 下拉選單選擇商品
-        edit_name = st.selectbox("選擇要編輯圖片的商品", df['商品名稱'].tolist(), key="edit_select")
-        
-        # 取得該商品目前的連結
+        edit_name = st.selectbox("選擇要編輯的商品", df['商品名稱'].tolist(), key="edit_select")
         current_data = df[df['商品名稱'] == edit_name].iloc[0]
         current_url = current_data.get('圖片連結', '')
         
@@ -223,23 +289,37 @@ with tab5:
             st.subheader("原本的圖片")
             if current_url:
                 st.image(current_url, width=200)
-                st.text("目前連結：")
-                st.code(current_url)
             else:
-                st.info("目前沒有設定圖片")
+                st.info("無圖片")
 
         with col_new:
-            st.subheader("設定新圖片")
+            st.subheader("更換新圖片")
             with st.form("update_img_form"):
-                new_img_url = st.text_input("請輸入新的圖片連結")
+                img_source_edit = st.radio("來源：", ["🔗 貼上連結", "📤 直接上傳"], horizontal=True, key="edit_radio")
+                
+                new_img_url_edit = ""
+                new_uploaded_file = None
+                
+                if img_source_edit == "🔗 貼上連結":
+                    new_img_url_edit = st.text_input("輸入新連結")
+                else:
+                    new_uploaded_file = st.file_uploader("上傳新圖片", type=['png', 'jpg', 'jpeg'], key="edit_uploader")
+
                 submitted_update = st.form_submit_button("更新圖片")
                 
                 if submitted_update:
-                    if new_img_url:
-                        with st.spinner("正在更新..."):
-                            update_product_image(edit_name, new_img_url)
-                            st.rerun() # 成功後刷新頁面
+                    final_url_edit = new_img_url_edit
+                    
+                    if new_uploaded_file:
+                        with st.spinner("上傳中..."):
+                            drive_link = upload_image_to_drive(new_uploaded_file)
+                            if drive_link:
+                                final_url_edit = drive_link
+                    
+                    if final_url_edit:
+                        update_product_image(edit_name, final_url_edit)
+                        st.rerun()
                     else:
-                        st.warning("連結不能為空")
+                        st.warning("請輸入連結或上傳圖片")
     else:
-        st.info("目前沒有商品資料可編輯。")
+        st.info("無資料")
