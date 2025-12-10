@@ -27,11 +27,16 @@ def get_worksheet():
         return None
 
 # --- 連線設定：Google Drive (用於上傳圖片) ---
+
 def get_drive_service():
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
-        # 使用 google.oauth2 建立 Drive API 專用的憑證
-        creds = service_account.Credentials.from_service_account_info(creds_dict)
+        
+        # 修正：必須明確指定 Drive API 的權限範圍 (Scope)
+        # 否則雖然連線成功，但會因為沒有權限而無法上傳檔案
+        SCOPES = ['https://www.googleapis.com/auth/drive']
+        
+        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         service = build('drive', 'v3', credentials=creds)
         return service
     except Exception as e:
