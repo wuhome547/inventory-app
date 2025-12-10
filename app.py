@@ -6,10 +6,12 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
-# --- 設定區 ---
+# --- 設定區 (請修改這裡！) ---
 SPREADSHEET_NAME = "inventory_system"
+# 👇 請將您的資料夾 ID 貼在引號裡面
+DRIVE_FOLDER_ID = "1twlNXMHi1YVnC68nkEwf7HRIYPBaIzhr" 
 
-# --- 連線設定：Google Sheets ---
+# --- 連線設定 ---
 def get_worksheet():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
@@ -26,16 +28,11 @@ def get_worksheet():
         st.error(f"❌ 找不到試算表 '{SPREADSHEET_NAME}'")
         return None
 
-# --- 連線設定：Google Drive (用於上傳圖片) ---
-
 def get_drive_service():
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
-        
-        # 修正：必須明確指定 Drive API 的權限範圍 (Scope)
-        # 否則雖然連線成功，但會因為沒有權限而無法上傳檔案
+        # 明確指定 Drive 權限範圍
         SCOPES = ['https://www.googleapis.com/auth/drive']
-        
         creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         service = build('drive', 'v3', credentials=creds)
         return service
@@ -45,19 +42,24 @@ def get_drive_service():
 
 def upload_image_to_drive(uploaded_file):
     """
-    將上傳的檔案儲存到 Google Drive，並回傳可顯示的連結。
+    將檔案上傳到指定的共用資料夾，解決空間不足問題。
     """
     service = get_drive_service()
     if not service: return ""
 
     try:
-        # 1. 設定檔案資訊
-        file_metadata = {'name': uploaded_file.name}
+        if DRIVE_FOLDER_ID == "這裡填入您的資料夾ID" or not DRIVE_FOLDER_ID:
+            st.error("⚠️ 請先在程式碼中設定 DRIVE_FOLDER_ID (資料夾 ID)")
+            return ""
+
+        file_metadata = {
+            'name': uploaded_file.name,
+            'parents': [DRIVE_FOLDER_ID]  # 關鍵：指定上傳到哪個資料夾
+        }
         
-        # 2. 建立媒體上傳物件
         media = MediaIoBaseUpload(uploaded_file, mimetype=uploaded_file.type, resumable=True)
         
-        # 3. 執行上傳
+        # 執行上傳
         file = service.files().create(
             body=file_metadata,
             media_body=media,
@@ -66,19 +68,14 @@ def upload_image_to_drive(uploaded_file):
         
         file_id = file.get('id')
         
-        # 4. 設定權限為公開 (Anyone with link can view)
-        # 這是必須的，否則 Streamlit 網頁無法直接顯示圖片
-        user_permission = {
-            'type': 'anyone',
-            'role': 'reader',
-        }
+        # 設定為公開讀取 (讓網頁能顯示)
+        user_permission = {'type': 'anyone', 'role': 'reader'}
         service.permissions().create(
             fileId=file_id,
             body=user_permission,
             fields='id',
         ).execute()
         
-        # 5. 回傳縮圖連結 (sz=w1000 代表寬度1000px)
         return f"https://drive.google.com/thumbnail?id={file_id}&sz=w1000"
 
     except Exception as e:
@@ -122,7 +119,6 @@ def add_product(name, quantity, price, image_url):
         new_qty = current_qty + quantity
         sheet.update_cell(cell.row, 2, new_qty)
         sheet.update_cell(cell.row, 3, price)
-        # 如果有新圖片才更新，否則保留原圖 (若輸入為空)
         if final_img_url:
             sheet.update_cell(cell.row, 4, final_img_url)
         st.success(f"✅ 已更新 '{name}'。")
@@ -234,14 +230,12 @@ with tab2:
             if p_name:
                 final_url = p_img_url
                 
-                # 若使用者選擇上傳圖片，優先處理上傳
                 if p_uploaded_file is not None:
                     with st.spinner("正在上傳圖片至 Google Drive..."):
                         drive_link = upload_image_to_drive(p_uploaded_file)
                         if drive_link:
                             final_url = drive_link
                         else:
-                            st.error("圖片上傳失敗，請重試。")
                             st.stop()
                             
                 with st.spinner("寫入資料庫..."):
@@ -277,7 +271,7 @@ with tab4:
                 else:
                     st.error("請勾選確認")
 
-# Tab 5: 編輯資料 (含上傳功能)
+# Tab 5: 編輯資料
 with tab5:
     st.header("✏️ 編輯商品資料")
     df = get_inventory_df()
