@@ -27,16 +27,17 @@ def get_worksheet():
         return None
 
 # --- ImgBB 上傳函式 ---
+# 請替換原本的 upload_image_to_imgbb 函式
 def upload_image_to_imgbb(uploaded_file):
     """
     將圖片上傳到 ImgBB 圖床，回傳圖片網址。
     """
+    # 請填入您的 API Key
     if not IMGBB_API_KEY or IMGBB_API_KEY == "請將您的 ImgBB API Key 貼在這裡":
         st.error("⚠️ 請先在程式碼中設定 IMGBB_API_KEY")
         return ""
 
     try:
-        # ImgBB 需要將圖片轉為 base64 格式
         image_content = uploaded_file.read()
         b64_image = base64.b64encode(image_content)
         
@@ -49,7 +50,9 @@ def upload_image_to_imgbb(uploaded_file):
         result = response.json()
         
         if result["status"] == 200:
-            return result["data"]["url"]
+            # 修改這裡：優先使用 'display_url' 或 'url'
+            # 這是 ImgBB 的直接連結，可以直接被 <img> 標籤讀取
+            return result["data"]["display_url"] 
         else:
             st.error(f"ImgBB 上傳失敗: {result['status']} - {result.get('error', {}).get('message')}")
             return ""
