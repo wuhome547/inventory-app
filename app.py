@@ -2,15 +2,14 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
+import requests
+import base64
 
 # --- 設定區 (請修改這裡！) ---
 SPREADSHEET_NAME = "inventory_system"
-# 👇 請將您的資料夾 ID 貼在引號裡面
-DRIVE_FOLDER_ID = "1twlNXMHi1YVnC68nkEwf7HRIYPBaIzhr"
-# --- 連線設定 ---
+IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b" 
+
+# --- 連線設定：Google Sheets ---
 def get_worksheet():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
@@ -27,77 +26,37 @@ def get_worksheet():
         st.error(f"❌ 找不到試算表 '{SPREADSHEET_NAME}'")
         return None
 
-def get_drive_service():
-    try:
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        # 明確指定 Drive 權限範圍
-        SCOPES = ['https://www.googleapis.com/auth/drive']
-        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-        service = build('drive', 'v3', credentials=creds)
-        return service
-    except Exception as e:
-        st.error(f"❌ Drive API 連線失敗: {e}")
-        return None
-
-def upload_image_to_drive(uploaded_file):
+# --- ImgBB 上傳函式 ---
+def upload_image_to_imgbb(uploaded_file):
     """
-    將檔案上傳到指定的共用資料夾，解決空間不足問題。
+    將圖片上傳到 ImgBB 圖床，回傳圖片網址。
     """
-
-    # 👇 加入這一行，讓它直接把目前的 ID 印在網頁上給你看
-    st.error(f"目前程式讀到的 ID 是: {DRIVE_FOLDER_ID}")
-
-
-    
-    service = get_drive_service()
-    if not service: return ""
-
-    try:
-        if DRIVE_FOLDER_ID == "這裡填入您的資料夾ID" or not DRIVE_FOLDER_ID:
-            st.error("⚠️ 請先在程式碼中設定 DRIVE_FOLDER_ID (資料夾 ID)")
-            return ""
-
-        file_metadata = {
-            'name': uploaded_file.name,
-            'parents': [DRIVE_FOLDER_ID]  # 關鍵：指定上傳到哪個資料夾
-        }
-        
-        media = MediaIoBaseUpload(uploaded_file, mimetype=uploaded_file.type, resumable=True)
-        
-        # 執行上傳
-        file = service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields='id'
-        ).execute()
-        
-        file_id = file.get('id')
-        
-        # 設定為公開讀取 (讓網頁能顯示)
-        user_permission = {'type': 'anyone', 'role': 'reader'}
-        service.permissions().create(
-            fileId=file_id,
-            body=user_permission,
-            fields='id',
-        ).execute()
-        
-        return f"https://drive.google.com/thumbnail?id={file_id}&sz=w1000"
-
-    except Exception as e:
-        st.error(f"上傳圖片失敗: {e}")
+    if not IMGBB_API_KEY or IMGBB_API_KEY == "請將您的 ImgBB API Key 貼在這裡":
+        st.error("⚠️ 請先在程式碼中設定 IMGBB_API_KEY")
         return ""
 
-# --- 輔助函數 ---
-def process_image_url(url):
-    if not url: return ""
-    url = str(url).strip()
-    if "drive.google.com" in url and "/d/" in url:
-        try:
-            file_id = url.split("/d/")[1].split("/")[0]
-            return f"https://drive.google.com/thumbnail?id={file_id}&sz=w1000"
-        except:
-            return url
-    return url
+    try:
+        # ImgBB 需要將圖片轉為 base64 格式
+        image_content = uploaded_file.read()
+        b64_image = base64.b64encode(image_content)
+        
+        payload = {
+            "key": IMGBB_API_KEY,
+            "image": b64_image,
+        }
+        
+        response = requests.post("https://api.imgbb.com/1/upload", data=payload)
+        result = response.json()
+        
+        if result["status"] == 200:
+            return result["data"]["url"]
+        else:
+            st.error(f"ImgBB 上傳失敗: {result['status']} - {result.get('error', {}).get('message')}")
+            return ""
+            
+    except Exception as e:
+        st.error(f"上傳過程發生錯誤: {e}")
+        return ""
 
 # --- 核心功能函數 ---
 
@@ -115,7 +74,6 @@ def add_product(name, quantity, price, image_url):
     sheet = get_worksheet()
     if not sheet: return
 
-    final_img_url = process_image_url(image_url)
     cell_list = sheet.findall(name)
     
     if cell_list:
@@ -124,11 +82,11 @@ def add_product(name, quantity, price, image_url):
         new_qty = current_qty + quantity
         sheet.update_cell(cell.row, 2, new_qty)
         sheet.update_cell(cell.row, 3, price)
-        if final_img_url:
-            sheet.update_cell(cell.row, 4, final_img_url)
+        if image_url:
+            sheet.update_cell(cell.row, 4, image_url)
         st.success(f"✅ 已更新 '{name}'。")
     else:
-        sheet.append_row([name, quantity, price, final_img_url])
+        sheet.append_row([name, quantity, price, image_url])
         st.success(f"🆕 已新增 '{name}'。")
 
 def sell_product(name, quantity):
@@ -163,15 +121,14 @@ def update_product_image(name, new_url):
     cell_list = sheet.findall(name)
     if cell_list:
         cell = cell_list[0]
-        final_img_url = process_image_url(new_url)
-        sheet.update_cell(cell.row, 4, final_img_url)
+        sheet.update_cell(cell.row, 4, new_url)
         st.success(f"🖼️ 已更新 '{name}' 的圖片連結！")
     else:
         st.error(f"❌ 找不到商品 '{name}'")
 
 # --- 網頁介面設計 ---
 
-st.set_page_config(page_title="雲端進銷存(含圖)", layout="wide")
+st.set_page_config(page_title="雲端進銷存(ImgBB版)", layout="wide")
 st.title("☁️ 視覺化進銷存系統")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨", "➖ 銷貨", "❌ 刪除", "✏️ 編輯資料"])
@@ -208,7 +165,7 @@ with tab1:
         st.info("目前沒有資料。")
     if st.button("🔄 重新整理"): st.rerun()
 
-# Tab 2: 進貨 (含上傳功能)
+# Tab 2: 進貨
 with tab2:
     st.header("商品進貨")
     with st.form("add_form"):
@@ -218,16 +175,16 @@ with tab2:
         with c2: p_price = st.number_input("單價", 0, value=100)
         
         st.write("---")
-        st.write("📸 商品圖片來源 (擇一)")
-        img_source = st.radio("選擇圖片上傳方式：", ["🔗 貼上連結", "📤 直接上傳圖片"], horizontal=True)
+        st.write("📸 圖片來源")
+        img_source = st.radio("選擇方式：", ["🔗 貼上連結", "📤 直接上傳 (ImgBB)"], horizontal=True)
         
         p_img_url = ""
         p_uploaded_file = None
         
         if img_source == "🔗 貼上連結":
-            p_img_url = st.text_input("圖片連結 (支援 Google Drive 分享連結)")
+            p_img_url = st.text_input("圖片連結")
         else:
-            p_uploaded_file = st.file_uploader("上傳圖片 (jpg, png)", type=['png', 'jpg', 'jpeg'])
+            p_uploaded_file = st.file_uploader("上傳圖片", type=['png', 'jpg', 'jpeg'])
 
         submitted = st.form_submit_button("確認進貨 / 更新")
         
@@ -236,12 +193,12 @@ with tab2:
                 final_url = p_img_url
                 
                 if p_uploaded_file is not None:
-                    with st.spinner("正在上傳圖片至 Google Drive..."):
-                        drive_link = upload_image_to_drive(p_uploaded_file)
-                        if drive_link:
-                            final_url = drive_link
+                    with st.spinner("正在上傳圖片到 ImgBB..."):
+                        imgbb_link = upload_image_to_imgbb(p_uploaded_file)
+                        if imgbb_link:
+                            final_url = imgbb_link
                         else:
-                            st.stop()
+                            st.stop() # 上傳失敗就停下來
                             
                 with st.spinner("寫入資料庫..."):
                     add_product(p_name, p_qty, p_price, final_url)
@@ -299,7 +256,7 @@ with tab5:
         with col_new:
             st.subheader("更換新圖片")
             with st.form("update_img_form"):
-                img_source_edit = st.radio("來源：", ["🔗 貼上連結", "📤 直接上傳"], horizontal=True, key="edit_radio")
+                img_source_edit = st.radio("來源：", ["🔗 貼上連結", "📤 直接上傳 (ImgBB)"], horizontal=True, key="edit_radio")
                 
                 new_img_url_edit = ""
                 new_uploaded_file = None
@@ -316,9 +273,9 @@ with tab5:
                     
                     if new_uploaded_file:
                         with st.spinner("上傳中..."):
-                            drive_link = upload_image_to_drive(new_uploaded_file)
-                            if drive_link:
-                                final_url_edit = drive_link
+                            imgbb_link = upload_image_to_imgbb(new_uploaded_file)
+                            if imgbb_link:
+                                final_url_edit = imgbb_link
                     
                     if final_url_edit:
                         update_product_image(edit_name, final_url_edit)
