@@ -192,24 +192,45 @@ with tab1:
         st.info("無資料")
     if st.button("🔄 重新整理"): st.rerun()
 
-# 其餘 Tab 保持不變 (請複製原本的)
+# Tab 2: 進貨 (優化版：同時顯示連結與上傳)
 with tab2:
-    st.header("進貨")
-    with st.form("add"):
-        name = st.text_input("名稱")
+    st.header("商品進貨")
+    with st.form("add_form"):
+        p_name = st.text_input("商品名稱")
         c1, c2 = st.columns(2)
-        qty = c1.number_input("數量", 1, value=10)
-        price = c2.number_input("單價", 0, value=100)
-        src = st.radio("圖片", ["連結", "上傳"], horizontal=True)
-        url, file = "", None
-        if src == "連結": url = st.text_input("網址")
-        else: file = st.file_uploader("上傳", type=['png','jpg'])
-        if st.form_submit_button("確認"):
-            if file:
-                with st.spinner("上傳中..."):
-                    u = upload_image_to_imgbb(file)
-                    if u: url = u
-            if name: add_product(name, qty, price, url)
+        with c1: p_qty = st.number_input("進貨數量", 1, value=10)
+        with c2: p_price = st.number_input("單價", 0, value=100)
+        
+        st.divider()
+        st.write("📸 **圖片設定 (擇一填寫，若兩者皆有則以「上傳」為優先)**")
+        
+        # 1. 直接顯示網址輸入框
+        p_img_url = st.text_input("方式 A：貼上圖片連結 (ImgBB / Google Drive)", placeholder="https://...")
+        
+        st.caption("--- 或 ---")
+        
+        # 2. 直接顯示上傳按鈕
+        p_uploaded_file = st.file_uploader("方式 B：從本機上傳圖片", type=['png', 'jpg', 'jpeg'])
+
+        submitted = st.form_submit_button("確認進貨 / 更新", type="primary")
+        
+        if submitted:
+            if p_name:
+                final_url = p_img_url # 預設使用輸入框的網址
+                
+                # 邏輯判斷：如果有上傳檔案，就執行上傳並覆蓋掉網址
+                if p_uploaded_file is not None:
+                    with st.spinner("正在上傳圖片到 ImgBB..."):
+                        imgbb_link = upload_image_to_imgbb(p_uploaded_file)
+                        if imgbb_link:
+                            final_url = imgbb_link
+                        else:
+                            st.stop() # 上傳失敗就停止
+                            
+                with st.spinner("寫入資料庫..."):
+                    add_product(p_name, p_qty, p_price, final_url)
+            else:
+                st.warning("請輸入商品名稱")
 
 with tab3:
     st.header("銷貨")
@@ -286,16 +307,15 @@ with tab4:
     else:
         st.info("目前沒有商品可供刪除。")
         
-# Tab 5: 編輯資料 (全功能版)
+# Tab 5: 編輯資料 (優化版：同時顯示)
 with tab5:
     st.header("✏️ 編輯商品資料")
     df = get_inventory_df()
     
     if not df.empty:
-        # 1. 選擇商品
         edit_name = st.selectbox("請選擇要編輯的商品", df['商品名稱'].tolist(), key="edit_select_full")
         
-        # 2. 取得目前資料 (作為預設值)
+        # 取得目前資料
         current_data = df[df['商品名稱'] == edit_name].iloc[0]
         curr_qty = int(current_data['數量'])
         curr_price = int(current_data['單價'])
@@ -303,13 +323,12 @@ with tab5:
         
         st.divider()
         
-        # 3. 編輯表單
         with st.form("edit_full_form"):
             col_info, col_img_preview = st.columns([1, 1])
             
             with col_info:
                 st.subheader("📦 基本資訊")
-                new_qty = st.number_input("庫存數量", min_value=0, value=curr_qty, help="直接修改庫存數量")
+                new_qty = st.number_input("庫存數量", min_value=0, value=curr_qty)
                 new_price = st.number_input("商品單價", min_value=0, value=curr_price)
             
             with col_img_preview:
@@ -319,34 +338,35 @@ with tab5:
                 else:
                     st.info("尚無圖片")
 
-            st.subheader("📸 更新圖片 (選填)")
-            img_source_edit = st.radio("圖片來源：", ["保留原圖/貼上連結", "📤 上傳新圖片 (ImgBB)"], horizontal=True)
+            st.subheader("📸 更新圖片")
+            st.caption("若不上傳新圖，也不修改連結，則會保留原圖。")
             
-            new_url_input = st.text_input("圖片連結", value=curr_url)
-            new_file_upload = None
+            # 1. 網址輸入框 (預設帶入舊網址)
+            new_url_input = st.text_input("方式 A：修改圖片連結", value=curr_url)
             
-            if img_source_edit == "📤 上傳新圖片 (ImgBB)":
-                new_file_upload = st.file_uploader("上傳新圖片", type=['png', 'jpg', 'jpeg'])
+            st.caption("--- 或 ---")
             
-            st.write("") # 排版空格
+            # 2. 上傳按鈕
+            new_file_upload = st.file_uploader("方式 B：上傳新圖片取代", type=['png', 'jpg', 'jpeg'])
+            
+            st.write("")
             submitted_edit = st.form_submit_button("💾 儲存變更", type="primary", use_container_width=True)
             
             if submitted_edit:
                 final_url = new_url_input
                 
-                # 如果有上傳新圖，優先使用上傳的網址
+                # 優先權邏輯：有上傳檔案 > 網址輸入框
                 if new_file_upload:
                     with st.spinner("正在上傳新圖片..."):
                         uploaded_link = upload_image_to_imgbb(new_file_upload)
                         if uploaded_link:
                             final_url = uploaded_link
                         else:
-                            st.warning("圖片上傳失敗，將保留原本設定。")
+                            st.warning("圖片上傳失敗，維持原樣。")
                 
-                # 執行更新
-                with st.spinner("正在寫入資料庫..."):
+                with st.spinner("正在更新資料庫..."):
                     update_product_info(edit_name, new_qty, new_price, final_url)
-                    st.rerun() # 成功後刷新頁面
+                    st.rerun()
 
     else:
         st.info("目前沒有資料可供編輯。")
