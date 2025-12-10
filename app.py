@@ -134,20 +134,31 @@ st.title("☁️ 視覺化進銷存系統")
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨", "➖ 銷貨", "❌ 刪除", "✏️ 編輯資料"])
 
 # Tab 1: 庫存圖牆
+# Tab 1: 庫存圖牆 (請確認這段程式碼)
 with tab1:
     st.header("庫存總覽")
     df = get_inventory_df()
     if not df.empty:
         st.subheader("📋 庫存清單")
+        
+        # 1. 確保圖片連結是字串，且不是 NaN
+        df['圖片連結'] = df['圖片連結'].astype(str).replace('nan', '')
+
         st.dataframe(
             df,
             column_config={
-                "圖片連結": st.column_config.ImageColumn("商品圖片", width="small"),
+                "圖片連結": st.column_config.ImageColumn(
+                    "商品圖片", 
+                    width="small",
+                    help="商品預覽圖" 
+                ),
                 "單價": st.column_config.NumberColumn(format="$%d"),
             },
             use_container_width=True,
             hide_index=True
         )
+        
+        # ... (下方查看大圖的程式碼不用改)
         st.divider()
         st.subheader("🔍 查看商品大圖")
         col_sel, col_img = st.columns([1, 2])
