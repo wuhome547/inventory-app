@@ -56,70 +56,111 @@ def upload_image_to_imgbb(uploaded_file):
         st.error(f"錯誤: {e}")
         return ""
 
-# --- 核心功能 ---
+# --- 核心功能 (已加入型態強制轉換) ---
+
 def get_inventory_df():
     sheet = get_worksheet()
     if sheet:
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
+        
+        # 關鍵修正 1：強制將「商品名稱」轉為字串 (String)，解決數字名稱無法讀取的問題
+        if '商品名稱' in df.columns:
+            df['商品名稱'] = df['商品名稱'].astype(str)
+            
         if '圖片連結' not in df.columns: df['圖片連結'] = ""
         if '備註' not in df.columns: df['備註'] = ""
         return df
     return pd.DataFrame()
 
+def find_product_cell(sheet, name):
+    """
+    輔助函式：精確尋找商品所在的儲存格
+    解決數字/文字型態不一致的問題
+    """
+    target_name = str(name).strip() # 強制轉字串
+    
+    try:
+        # 先嘗試直接用字串找
+        cell = sheet.find(target_name)
+        return cell
+    except gspread.exceptions.CellNotFound:
+        return None
+
 def add_product(name, quantity, price, image_url, remarks):
     sheet = get_worksheet()
     if not sheet: return
+    
+    # 強制轉型
+    name_str = str(name).strip()
     clean_url = str(image_url).strip()
     if len(clean_url) > 2000: st.error("❌ 網址太長"); return
-    cell_list = sheet.findall(name)
-    if cell_list:
-        cell = cell_list[0]
+
+    cell = find_product_cell(sheet, name_str)
+    
+    if cell:
+        # 更新
         sheet.update_cell(cell.row, 2, int(sheet.cell(cell.row, 2).value) + quantity)
         sheet.update_cell(cell.row, 3, price)
         if clean_url: sheet.update_cell(cell.row, 4, clean_url)
         if remarks: sheet.update_cell(cell.row, 5, remarks)
-        st.success(f"✅ 更新 '{name}'")
+        st.success(f"✅ 更新 '{name_str}'")
     else:
-        sheet.append_row([name, quantity, price, clean_url, remarks])
-        st.success(f"🆕 新增 '{name}'")
+        # 新增：關鍵修正 2 -> 寫入時強制用 str(name)
+        sheet.append_row([name_str, quantity, price, clean_url, remarks])
+        st.success(f"🆕 新增 '{name_str}'")
 
 def sell_product(name, quantity):
     sheet = get_worksheet()
     if not sheet: return
-    cell_list = sheet.findall(name)
-    if cell_list:
-        cell = cell_list[0]
-        curr = int(sheet.cell(cell.row, 2).value)
+    
+    cell = find_product_cell(sheet, name)
+    
+    if cell:
+        current_val = sheet.cell(cell.row, 2).value
+        # 處理如果庫存被存成字串的情況
+        try:
+            curr = int(current_val)
+        except:
+            curr = 0
+            
         if curr >= quantity:
             sheet.update_cell(cell.row, 2, curr - quantity)
             st.success(f"💰 售出 {quantity} 個")
         else:
             st.error("❌ 庫存不足")
     else:
-        st.error("❌ 找不到商品")
+        st.error("❌ 找不到商品 (請確認名稱是否完全一致)")
 
 def delete_product(name):
     sheet = get_worksheet()
     if not sheet: return
-    cell_list = sheet.findall(name)
-    if cell_list:
-        sheet.delete_rows(cell_list[0].row)
+    
+    cell = find_product_cell(sheet, name)
+    
+    if cell:
+        sheet.delete_rows(cell.row)
         st.success(f"🗑️ 已刪除")
+    else:
+        st.error(f"❌ 找不到商品 '{name}'，無法刪除。")
 
 def update_product_info(name, new_qty, new_price, new_url, new_remarks):
     sheet = get_worksheet()
     if not sheet: return
+    
     clean_url = str(new_url).strip()
     if len(clean_url) > 2000: st.error("❌ 連結太長"); return
-    cell_list = sheet.findall(name)
-    if cell_list:
-        cell = cell_list[0]
+    
+    cell = find_product_cell(sheet, name)
+    
+    if cell:
         sheet.update_cell(cell.row, 2, new_qty)
         sheet.update_cell(cell.row, 3, new_price)
         sheet.update_cell(cell.row, 4, clean_url)
         sheet.update_cell(cell.row, 5, new_remarks)
         st.success(f"✅ 已更新資料")
+    else:
+        st.error(f"❌ 找不到商品 '{name}'")
 
 # --- 介面設計 ---
 st.set_page_config(page_title="雲端進銷存", layout="wide")
@@ -127,42 +168,36 @@ st.title("☁️ 視覺化進銷存系統")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨", "➖ 銷貨", "❌ 刪除", "✏️ 編輯資料"])
 
-# Tab 1: 庫存圖牆 (加入搜尋功能)
+# Tab 1: 庫存圖牆
 with tab1:
     st.header("庫存總覽")
     df = get_inventory_df()
     
     if not df.empty:
-        # --- 🔍 搜尋區塊 ---
         col_search, col_refresh = st.columns([4, 1])
         with col_search:
-            search_query = st.text_input("🔍 搜尋商品 (輸入名稱或備註關鍵字)", "", placeholder="例如：紅色、iPhone...")
+            search_query = st.text_input("🔍 搜尋商品", "", placeholder="例如：123、紅色...")
         with col_refresh:
-            st.write("") # 排版用
-            st.write("") 
-            if st.button("🔄 重新整理", key="refresh_tab1"):
-                st.rerun()
+            st.write(""); st.write("")
+            if st.button("🔄 重新整理", key="refresh_tab1"): st.rerun()
 
-        # 篩選資料邏輯
         if search_query:
-            # 不分大小寫搜尋 (名稱 或 備註)
-            mask = df['商品名稱'].astype(str).str.contains(search_query, case=False) | \
+            mask = df['商品名稱'].str.contains(search_query, case=False) | \
                    df['備註'].astype(str).str.contains(search_query, case=False)
             df_display = df[mask]
         else:
             df_display = df
 
-        # --- 顯示區塊 ---
         if not df_display.empty:
-            st.subheader(f"📋 庫存清單 (共 {len(df_display)} 筆)")
+            st.subheader(f"📋 清單 (共 {len(df_display)} 筆)")
             
-            # 資料處理
             df_display['圖片連結'] = df_display['圖片連結'].astype(str).str.strip().replace('nan', '')
             df_display['備註'] = df_display['備註'].astype(str).replace('nan', '')
 
             st.dataframe(
                 df_display,
                 column_config={
+                    "商品名稱": st.column_config.TextColumn("商品名稱 (ID)"), # 明確顯示為文字
                     "圖片連結": st.column_config.ImageColumn("圖片", width="small"),
                     "單價": st.column_config.NumberColumn(format="$%d"),
                     "備註": st.column_config.TextColumn("備註", width="medium"),
@@ -172,35 +207,29 @@ with tab1:
             )
             
             st.divider()
-            
-            # 詳細資料區 (只顯示篩選後的結果)
             col_sel, col_img = st.columns([1, 2])
             with col_sel:
                 selected_product = st.selectbox("選擇商品查看詳情", df_display['商品名稱'].tolist(), key="tab1_select")
-                
-                # 從原始 df 抓資料比較安全
                 product_data = df[df['商品名稱'] == selected_product].iloc[0]
-                
                 st.info(f"**庫存**: {product_data['數量']} | **單價**: ${product_data['單價']}")
                 st.text_area("備註內容", value=product_data.get('備註',''), disabled=True, key="tab1_remark")
-                
             with col_img:
                 img_url = str(product_data.get('圖片連結', '')).strip()
                 if img_url and len(img_url)>10:
                     try: st.image(img_url, width=400)
-                    except: st.error("圖片載入失敗")
+                    except: st.error("圖片無效")
         else:
-            st.warning(f"找不到符合「{search_query}」的商品。")
-            
+            st.warning("無符合資料")
     else:
-        st.info("目前無資料")
+        st.info("無資料")
         if st.button("🔄 重新整理", key="refresh_empty"): st.rerun()
 
 # Tab 2: 進貨
 with tab2:
     st.header("商品進貨")
     with st.form("add_form"):
-        p_name = st.text_input("商品名稱")
+        # 這裡的輸入預設就是 string，我們在後端會再強制轉一次
+        p_name = st.text_input("商品名稱 (可輸入數字 ID)")
         c1, c2 = st.columns(2)
         p_qty = c1.number_input("數量", 1, value=10)
         p_price = c2.number_input("單價", 0, value=100)
@@ -271,7 +300,8 @@ with tab5:
     df = get_inventory_df()
     if not df.empty:
         edit_name = st.selectbox("選擇編輯對象", df['商品名稱'].tolist(), key="edit_select")
-        curr = df[df['商品名稱'] == edit_name].iloc[0]
+        # 這裡也要用 str() 確保匹配正確
+        curr = df[df['商品名稱'] == str(edit_name)].iloc[0]
         
         with st.form("edit_form"):
             k1, k2 = st.columns(2)
