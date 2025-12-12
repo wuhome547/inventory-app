@@ -9,22 +9,40 @@ import base64
 SPREADSHEET_NAME = "inventory_system"
 IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b" 
 
-# --- 連線設定 ---
-def get_worksheet():
+# --- 連線設定 (改良版：加入快取機制防斷線) ---
+
+@st.cache_resource(ttl=600)  # 設定快取，讓連線保持 10 分鐘，不用一直重登
+def get_gspread_client():
+    """
+    只執行一次登入動作，並將連線物件暫存在記憶體中。
+    """
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    except Exception:
-        st.error("❌ 無法讀取憑證，請檢查 secrets 設定")
+        client = gspread.authorize(creds)
+        return client
+    except Exception as e:
+        st.error(f"❌ Google 登入失敗: {e}")
         return None
-    client = gspread.authorize(creds)
+
+def get_worksheet():
+    """從快取中取得連線，並開啟試算表"""
+    client = get_gspread_client()
+    if not client: return None
+    
     try:
         sheet = client.open(SPREADSHEET_NAME).sheet1
         return sheet
     except gspread.exceptions.SpreadsheetNotFound:
         st.error(f"❌ 找不到試算表 '{SPREADSHEET_NAME}'")
         return None
+    except gspread.exceptions.APIError:
+        st.warning("⚠️ Google API 連線忙碌中，請稍等 1 分鐘後再試...")
+        # 清除快取，下次重試新的連線
+        st.cache_resource.clear()
+        return None
+
 
 # --- ImgBB 上傳函式 ---
 def upload_image_to_imgbb(uploaded_file):
