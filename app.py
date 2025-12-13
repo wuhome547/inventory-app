@@ -7,7 +7,7 @@ import base64
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
-IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b" 
+IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b"  
 
 # --- 連線設定 (快取版) ---
 @st.cache_resource(ttl=600)
@@ -56,32 +56,21 @@ def upload_image_to_imgbb(uploaded_file):
         st.error(f"錯誤: {e}")
         return ""
 
-# --- 核心功能 (已加入型態強制轉換) ---
-
+# --- 核心功能 ---
 def get_inventory_df():
     sheet = get_worksheet()
     if sheet:
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
-        
-        # 關鍵修正 1：強制將「商品名稱」轉為字串 (String)，解決數字名稱無法讀取的問題
-        if '商品名稱' in df.columns:
-            df['商品名稱'] = df['商品名稱'].astype(str)
-            
+        if '商品名稱' in df.columns: df['商品名稱'] = df['商品名稱'].astype(str)
         if '圖片連結' not in df.columns: df['圖片連結'] = ""
         if '備註' not in df.columns: df['備註'] = ""
         return df
     return pd.DataFrame()
 
 def find_product_cell(sheet, name):
-    """
-    輔助函式：精確尋找商品所在的儲存格
-    解決數字/文字型態不一致的問題
-    """
-    target_name = str(name).strip() # 強制轉字串
-    
+    target_name = str(name).strip()
     try:
-        # 先嘗試直接用字串找
         cell = sheet.find(target_name)
         return cell
     except gspread.exceptions.CellNotFound:
@@ -90,85 +79,98 @@ def find_product_cell(sheet, name):
 def add_product(name, quantity, price, image_url, remarks):
     sheet = get_worksheet()
     if not sheet: return
-    
-    # 強制轉型
     name_str = str(name).strip()
     clean_url = str(image_url).strip()
     if len(clean_url) > 2000: st.error("❌ 網址太長"); return
 
     cell = find_product_cell(sheet, name_str)
-    
     if cell:
-        # 更新
         sheet.update_cell(cell.row, 2, int(sheet.cell(cell.row, 2).value) + quantity)
         sheet.update_cell(cell.row, 3, price)
         if clean_url: sheet.update_cell(cell.row, 4, clean_url)
         if remarks: sheet.update_cell(cell.row, 5, remarks)
         st.success(f"✅ 更新 '{name_str}'")
     else:
-        # 新增：關鍵修正 2 -> 寫入時強制用 str(name)
         sheet.append_row([name_str, quantity, price, clean_url, remarks])
         st.success(f"🆕 新增 '{name_str}'")
 
 def sell_product(name, quantity):
     sheet = get_worksheet()
     if not sheet: return
-    
     cell = find_product_cell(sheet, name)
-    
     if cell:
-        current_val = sheet.cell(cell.row, 2).value
-        # 處理如果庫存被存成字串的情況
-        try:
-            curr = int(current_val)
-        except:
-            curr = 0
-            
+        try: curr = int(sheet.cell(cell.row, 2).value)
+        except: curr = 0
         if curr >= quantity:
             sheet.update_cell(cell.row, 2, curr - quantity)
             st.success(f"💰 售出 {quantity} 個")
         else:
             st.error("❌ 庫存不足")
     else:
-        st.error("❌ 找不到商品 (請確認名稱是否完全一致)")
+        st.error("❌ 找不到商品")
 
 def delete_product(name):
     sheet = get_worksheet()
     if not sheet: return
-    
     cell = find_product_cell(sheet, name)
-    
     if cell:
         sheet.delete_rows(cell.row)
         st.success(f"🗑️ 已刪除")
     else:
-        st.error(f"❌ 找不到商品 '{name}'，無法刪除。")
+        st.error(f"❌ 找不到商品")
 
 def update_product_info(name, new_qty, new_price, new_url, new_remarks):
     sheet = get_worksheet()
     if not sheet: return
-    
     clean_url = str(new_url).strip()
     if len(clean_url) > 2000: st.error("❌ 連結太長"); return
-    
     cell = find_product_cell(sheet, name)
-    
     if cell:
         sheet.update_cell(cell.row, 2, new_qty)
         sheet.update_cell(cell.row, 3, new_price)
         sheet.update_cell(cell.row, 4, clean_url)
         sheet.update_cell(cell.row, 5, new_remarks)
-        st.success(f"✅ 已更新資料")
+        st.success(f"✅ 更新成功")
     else:
-        st.error(f"❌ 找不到商品 '{name}'")
+        st.error(f"❌ 找不到商品")
+
+# --- 權限管理函式 ---
+def check_password():
+    """檢查密碼是否正確"""
+    if st.session_state["password_input"] == st.secrets["admin_password"]:
+        st.session_state["is_admin"] = True
+    else:
+        st.session_state["is_admin"] = False
+        st.error("❌ 密碼錯誤")
+
+def logout():
+    st.session_state["is_admin"] = False
+    st.rerun()
 
 # --- 介面設計 ---
 st.set_page_config(page_title="雲端進銷存", layout="wide")
+
+# 初始化 session state
+if "is_admin" not in st.session_state:
+    st.session_state["is_admin"] = False
+
+# --- 側邊欄：登入系統 ---
+with st.sidebar:
+    st.header("👤 用戶登入")
+    
+    if not st.session_state["is_admin"]:
+        st.text_input("請輸入管理員密碼", type="password", key="password_input", on_change=check_password)
+        st.info("💡 未登入只能瀏覽庫存，無法修改資料。")
+    else:
+        st.success("✅ 已登入 (管理員模式)")
+        if st.button("登出"):
+            logout()
+
 st.title("☁️ 視覺化進銷存系統")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨", "➖ 銷貨", "❌ 刪除", "✏️ 編輯資料"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨 (限)", "➖ 銷貨 (限)", "❌ 刪除 (限)", "✏️ 編輯 (限)"])
 
-# Tab 1: 庫存圖牆
+# Tab 1: 庫存圖牆 (所有人可見)
 with tab1:
     st.header("庫存總覽")
     df = get_inventory_df()
@@ -197,7 +199,7 @@ with tab1:
             st.dataframe(
                 df_display,
                 column_config={
-                    "商品名稱": st.column_config.TextColumn("商品名稱 (ID)"), # 明確顯示為文字
+                    "商品名稱": st.column_config.TextColumn("商品名稱 (ID)"),
                     "圖片連結": st.column_config.ImageColumn("圖片", width="small"),
                     "單價": st.column_config.NumberColumn(format="$%d"),
                     "備註": st.column_config.TextColumn("備註", width="medium"),
@@ -224,11 +226,18 @@ with tab1:
         st.info("無資料")
         if st.button("🔄 重新整理", key="refresh_empty"): st.rerun()
 
-# Tab 2: 進貨
+# --- 定義一個鎖定畫面的函式 ---
+def show_login_block():
+    st.warning("🔒 **此功能僅限管理員使用**")
+    st.info("請使用左側欄位輸入密碼登入，即可解鎖此頁面。")
+    st.stop() # 停止執行下方程式碼
+
+# Tab 2: 進貨 (需登入)
 with tab2:
     st.header("商品進貨")
+    if not st.session_state["is_admin"]: show_login_block() # 權限檢查
+
     with st.form("add_form"):
-        # 這裡的輸入預設就是 string，我們在後端會再強制轉一次
         p_name = st.text_input("商品名稱 (可輸入數字 ID)")
         c1, c2 = st.columns(2)
         p_qty = c1.number_input("數量", 1, value=10)
@@ -252,9 +261,11 @@ with tab2:
             else:
                 st.warning("請輸入名稱")
 
-# Tab 3: 銷貨
+# Tab 3: 銷貨 (需登入)
 with tab3:
     st.header("商品銷貨")
+    if not st.session_state["is_admin"]: show_login_block() # 權限檢查
+
     df = get_inventory_df()
     if not df.empty:
         with st.form("sell_form"):
@@ -264,9 +275,11 @@ with tab3:
     else:
         st.warning("無庫存")
 
-# Tab 4: 刪除
+# Tab 4: 刪除 (需登入)
 with tab4:
     st.header("刪除商品")
+    if not st.session_state["is_admin"]: show_login_block() # 權限檢查
+
     df = get_inventory_df()
     if not df.empty:
         if "del_mode" not in st.session_state: st.session_state["del_mode"] = False
@@ -294,13 +307,14 @@ with tab4:
                     st.session_state["del_mode"] = False
                     st.rerun()
 
-# Tab 5: 編輯
+# Tab 5: 編輯 (需登入)
 with tab5:
     st.header("✏️ 編輯資料")
+    if not st.session_state["is_admin"]: show_login_block() # 權限檢查
+
     df = get_inventory_df()
     if not df.empty:
         edit_name = st.selectbox("選擇編輯對象", df['商品名稱'].tolist(), key="edit_select")
-        # 這裡也要用 str() 確保匹配正確
         curr = df[df['商品名稱'] == str(edit_name)].iloc[0]
         
         with st.form("edit_form"):
