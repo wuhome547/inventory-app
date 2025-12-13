@@ -134,14 +134,26 @@ def update_product_info(name, new_qty, new_price, new_url, new_remarks):
     else:
         st.error(f"❌ 找不到商品")
 
-# --- 權限管理函式 ---
+# --- 權限管理函式 (防呆修正版) ---
 def check_password():
-    """檢查密碼是否正確"""
-    if st.session_state["password_input"] == st.secrets["admin_password"]:
+    """檢查密碼是否正確 (加入防呆，避免未設定 secrets 時崩潰)"""
+    
+    # 1. 先從 secrets 嘗試讀取密碼，如果沒設定，預設為 None
+    stored_password = st.secrets.get("admin_password")
+    
+    if not stored_password:
+        st.error("⚠️ 系統偵測到您尚未在 Secrets 設定 'admin_password'。")
+        st.info("請前往 Streamlit 後台 -> Settings -> Secrets 新增一行：admin_password = \"您的密碼\"")
+        return
+
+    # 2. 比對密碼
+    if st.session_state["password_input"] == stored_password:
         st.session_state["is_admin"] = True
+        # 登入成功後，清空輸入框 (選用，需配合 callback 邏輯，這裡先不加以免複雜)
     else:
         st.session_state["is_admin"] = False
         st.error("❌ 密碼錯誤")
+
 
 def logout():
     st.session_state["is_admin"] = False
