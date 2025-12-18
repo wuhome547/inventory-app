@@ -77,19 +77,15 @@ def show_login_block():
     st.info("請使用左側欄位輸入密碼登入。")
     st.stop()
 
-# --- 核心功能 (關鍵修正：全域資料清洗) ---
+# --- 核心功能 ---
 
 def get_inventory_df():
     sheet = get_worksheet()
     if sheet:
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
-        
-        # ⚠️ 關鍵修正：一讀進來就強制轉字串 + 去除頭尾空白
-        # 這樣就能保證不管是搜尋、顯示還是比對，用的都是乾淨的名稱
-        if '商品名稱' in df.columns: 
-            df['商品名稱'] = df['商品名稱'].astype(str).str.strip()
-            
+        # 強制資料清洗
+        if '商品名稱' in df.columns: df['商品名稱'] = df['商品名稱'].astype(str).str.strip()
         if '圖片連結' not in df.columns: df['圖片連結'] = ""
         if '備註' not in df.columns: df['備註'] = ""
         return df
@@ -102,7 +98,7 @@ def find_product_cell(sheet, name):
         str_values = [str(v).strip() for v in col_values]
         
         if target_name in str_values:
-            # 找最後一個符合的 (最新資料)
+            # 找最後一個 (最新)
             all_indices = [i for i, x in enumerate(str_values) if x == target_name]
             last_index = all_indices[-1]
             return sheet.cell(last_index + 1, 1)
@@ -194,7 +190,7 @@ st.title("☁️ 視覺化進銷存系統")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨 (限)", "➖ 銷貨 (限)", "❌ 刪除 (限)", "✏️ 編輯 (限)"])
 
-# Tab 1: 庫存圖牆
+# Tab 1: 庫存圖牆 (已移除詳細區備註)
 with tab1:
     st.header("庫存總覽")
     df = get_inventory_df()
@@ -220,7 +216,6 @@ with tab1:
             df_display['圖片連結'] = df_display['圖片連結'].astype(str).str.strip().replace('nan', '')
             df_display['主圖'] = df_display['圖片連結'].apply(lambda x: x.split(',')[0] if x else "")
             
-            # 使用 unique 確保選項不重複
             unique_options = df_display['商品名稱'].unique().tolist()
 
             st.dataframe(
@@ -241,21 +236,17 @@ with tab1:
             with col_sel:
                 selected_product = st.selectbox("選擇商品查看詳情", unique_options, key="tab1_select")
                 
-                # ⚠️ 這裡使用精確過濾
-                # 因為 df['商品名稱'] 已經在最上面被全域清洗過了 (.strip())
-                # unique_options 也是從清洗過的 df 來的
-                # 所以這裡的 match 應該是 100% 準確的
                 subset = df[df['商品名稱'] == selected_product]
                 
                 if not subset.empty:
-                    product_data = subset.iloc[-1] # 取最新一筆
+                    product_data = subset.iloc[-1]
                     st.info(f"**庫存**: {product_data['數量']} | **單價**: ${product_data['單價']}")
-                    st.text_area("備註內容", value=str(product_data.get('備註','')), disabled=True, key="tab1_remark")
                     
-                    # 傳遞圖片給右邊的欄位顯示
+                    # 🗑️ 已刪除：備註內容的 text_area
+                    
                     current_images = str(product_data.get('圖片連結', '')).strip()
                 else:
-                    st.error("❌ 讀取資料失敗，請重新整理頁面。")
+                    st.error("❌ 讀取資料失敗")
                     current_images = ""
                 
             with col_img:
