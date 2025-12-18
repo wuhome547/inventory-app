@@ -7,7 +7,7 @@ import base64
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
-IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b"  
+IMGBB_API_KEY = "請將您的 ImgBB API Key 貼在這裡" 
 
 # --- 連線設定 ---
 @st.cache_resource(ttl=600)
@@ -320,3 +320,78 @@ with tab3:
             s_qty = st.number_input("數量", 1)
             if st.form_submit_button("銷貨"): sell_product(s_name, s_qty)
     else:
+        st.warning("無庫存")
+
+# Tab 4: 刪除
+with tab4:
+    st.header("刪除商品")
+    if not st.session_state["is_admin"]: show_login_block()
+    df = get_inventory_df()
+    if not df.empty:
+        if "del_mode" not in st.session_state: st.session_state["del_mode"] = False
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            d_name = st.selectbox("選擇刪除對象", df['商品名稱'].unique().tolist(), disabled=st.session_state["del_mode"], key="del_select")
+        with c2:
+            st.write(""); st.write("")
+            if st.button("🗑️ 刪除", type="primary", disabled=st.session_state["del_mode"], key="del_btn_init"):
+                st.session_state["del_mode"] = True
+                st.session_state["del_target"] = d_name
+                st.rerun()
+        if st.session_state["del_mode"]:
+            st.warning(f"確認刪除 **{st.session_state['del_target']}**？")
+            k1, k2 = st.columns(2)
+            with k1:
+                if st.button("✅ 確認", use_container_width=True, key="del_confirm"):
+                    delete_product(st.session_state["del_target"])
+                    st.session_state["del_mode"] = False
+                    st.rerun()
+            with k2:
+                if st.button("❌ 取消", use_container_width=True, key="del_cancel"):
+                    st.session_state["del_mode"] = False
+                    st.rerun()
+
+# Tab 5: 編輯
+with tab5:
+    st.header("✏️ 編輯資料")
+    if not st.session_state["is_admin"]: show_login_block()
+    df = get_inventory_df()
+    if not df.empty:
+        edit_name = st.selectbox("選擇編輯對象", df['商品名稱'].unique().tolist(), key="edit_select")
+        # 這裡也改成取最後一筆
+        curr = df[df['商品名稱'] == str(edit_name)].iloc[-1]
+        
+        with st.form("edit_form"):
+            k1, k2 = st.columns(2)
+            n_qty = k1.number_input("庫存", 0, value=int(curr['數量']))
+            n_price = k2.number_input("單價", 0, value=int(curr['單價']))
+            n_rem = st.text_area("備註", value=str(curr.get('備註','')))
+            
+            st.subheader("圖片管理")
+            raw_curr_urls = str(curr.get('圖片連結','')).strip()
+            if raw_curr_urls:
+                st.caption("預覽：")
+                curr_url_list = [u.strip() for u in raw_curr_urls.split(',') if u.strip()]
+                st.image(curr_url_list, width=150)
+            
+            n_url_str = st.text_area("圖片連結清單 (可手動刪改)", value=raw_curr_urls, height=100)
+            st.write("➕ 新增圖片")
+            n_files = st.file_uploader("上傳加入", type=['png','jpg'], accept_multiple_files=True, key="edit_files")
+            
+            if st.form_submit_button("儲存變更", type="primary"):
+                final_str = n_url_str
+                if n_files:
+                    new_uploaded_urls = []
+                    with st.spinner(f"上傳中..."):
+                        for f in n_files:
+                            u = upload_image_to_imgbb(f)
+                            if u: new_uploaded_urls.append(u)
+                    if new_uploaded_urls:
+                        if final_str.strip(): final_str += "," + ",".join(new_uploaded_urls)
+                        else: final_str = ",".join(new_uploaded_urls)
+                
+                with st.spinner("更新資料庫..."):
+                    update_product_info(edit_name, n_qty, n_price, final_str, n_rem)
+                    st.rerun()
+    else:
+        st.info("無資料")
