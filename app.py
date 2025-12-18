@@ -7,7 +7,7 @@ import base64
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
-IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b"  
+IMGBB_API_KEY = "請將您的 ImgBB API Key 貼在這裡" 
 
 # --- 連線設定 (快取版) ---
 @st.cache_resource(ttl=600)
@@ -56,7 +56,29 @@ def upload_image_to_imgbb(uploaded_file):
         st.error(f"錯誤: {e}")
         return ""
 
-# --- 核心功能 ---
+# --- 權限管理 ---
+def check_password():
+    stored_password = st.secrets.get("admin_password")
+    if not stored_password:
+        st.error("⚠️ 請先在 Secrets 設定 'admin_password'")
+        return
+    if st.session_state["password_input"] == stored_password:
+        st.session_state["is_admin"] = True
+    else:
+        st.session_state["is_admin"] = False
+        st.error("❌ 密碼錯誤")
+
+def logout():
+    st.session_state["is_admin"] = False
+    st.rerun()
+
+def show_login_block():
+    st.warning("🔒 **此功能僅限管理員使用**")
+    st.info("請使用左側欄位輸入密碼登入。")
+    st.stop()
+
+# --- 核心功能 (多圖版) ---
+
 def get_inventory_df():
     sheet = get_worksheet()
     if sheet:
@@ -76,22 +98,34 @@ def find_product_cell(sheet, name):
     except gspread.exceptions.CellNotFound:
         return None
 
-def add_product(name, quantity, price, image_url, remarks):
+def add_product(name, quantity, price, image_urls, remarks):
+    """
+    image_urls: 可以是 list 或是 用逗號分隔的字串
+    """
     sheet = get_worksheet()
     if not sheet: return
     name_str = str(name).strip()
-    clean_url = str(image_url).strip()
-    if len(clean_url) > 2000: st.error("❌ 網址太長"); return
+    
+    # 處理多圖連結 -> 轉成字串儲存
+    if isinstance(image_urls, list):
+        final_url_str = ",".join(image_urls)
+    else:
+        final_url_str = str(image_urls).strip()
+
+    if len(final_url_str) > 4000: st.error("❌ 網址總長度過長"); return
 
     cell = find_product_cell(sheet, name_str)
     if cell:
+        # 更新
         sheet.update_cell(cell.row, 2, int(sheet.cell(cell.row, 2).value) + quantity)
         sheet.update_cell(cell.row, 3, price)
-        if clean_url: sheet.update_cell(cell.row, 4, clean_url)
+        # 若有新圖則覆蓋，若無則保留? 這裡邏輯為覆蓋 (若要保留需先讀取)
+        if final_url_str: sheet.update_cell(cell.row, 4, final_url_str)
         if remarks: sheet.update_cell(cell.row, 5, remarks)
         st.success(f"✅ 更新 '{name_str}'")
     else:
-        sheet.append_row([name_str, quantity, price, clean_url, remarks])
+        # 新增
+        sheet.append_row([name_str, quantity, price, final_url_str, remarks])
         st.success(f"🆕 新增 '{name_str}'")
 
 def sell_product(name, quantity):
@@ -119,70 +153,42 @@ def delete_product(name):
     else:
         st.error(f"❌ 找不到商品")
 
-def update_product_info(name, new_qty, new_price, new_url, new_remarks):
+def update_product_info(name, new_qty, new_price, new_url_str, new_remarks):
     sheet = get_worksheet()
     if not sheet: return
-    clean_url = str(new_url).strip()
-    if len(clean_url) > 2000: st.error("❌ 連結太長"); return
+    
+    clean_url_str = str(new_url_str).strip() # 這裡傳進來已經是逗號分隔字串
+    if len(clean_url_str) > 4000: st.error("❌ 連結太長"); return
+    
     cell = find_product_cell(sheet, name)
     if cell:
         sheet.update_cell(cell.row, 2, new_qty)
         sheet.update_cell(cell.row, 3, new_price)
-        sheet.update_cell(cell.row, 4, clean_url)
+        sheet.update_cell(cell.row, 4, clean_url_str)
         sheet.update_cell(cell.row, 5, new_remarks)
         st.success(f"✅ 更新成功")
     else:
         st.error(f"❌ 找不到商品")
 
-# --- 權限管理函式 (防呆修正版) ---
-def check_password():
-    """檢查密碼是否正確 (加入防呆，避免未設定 secrets 時崩潰)"""
-    
-    # 1. 先從 secrets 嘗試讀取密碼，如果沒設定，預設為 None
-    stored_password = st.secrets.get("admin_password")
-    
-    if not stored_password:
-        st.error("⚠️ 系統偵測到您尚未在 Secrets 設定 'admin_password'。")
-        st.info("請前往 Streamlit 後台 -> Settings -> Secrets 新增一行：admin_password = \"您的密碼\"")
-        return
-
-    # 2. 比對密碼
-    if st.session_state["password_input"] == stored_password:
-        st.session_state["is_admin"] = True
-        # 登入成功後，清空輸入框 (選用，需配合 callback 邏輯，這裡先不加以免複雜)
-    else:
-        st.session_state["is_admin"] = False
-        st.error("❌ 密碼錯誤")
-
-
-def logout():
-    st.session_state["is_admin"] = False
-    st.rerun()
-
 # --- 介面設計 ---
 st.set_page_config(page_title="雲端進銷存", layout="wide")
 
-# 初始化 session state
-if "is_admin" not in st.session_state:
-    st.session_state["is_admin"] = False
+if "is_admin" not in st.session_state: st.session_state["is_admin"] = False
 
-# --- 側邊欄：登入系統 ---
 with st.sidebar:
     st.header("👤 用戶登入")
-    
     if not st.session_state["is_admin"]:
-        st.text_input("請輸入管理員密碼", type="password", key="password_input", on_change=check_password)
-        st.info("💡 未登入只能瀏覽庫存，無法修改資料。")
+        st.text_input("輸入管理員密碼", type="password", key="password_input", on_change=check_password)
+        st.info("💡 未登入僅能瀏覽")
     else:
-        st.success("✅ 已登入 (管理員模式)")
-        if st.button("登出"):
-            logout()
+        st.success("✅ 已登入")
+        if st.button("登出"): logout()
 
 st.title("☁️ 視覺化進銷存系統")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨 (限)", "➖ 銷貨 (限)", "❌ 刪除 (限)", "✏️ 編輯 (限)"])
 
-# Tab 1: 庫存圖牆 (所有人可見)
+# Tab 1: 庫存圖牆 (多圖顯示邏輯)
 with tab1:
     st.header("庫存總覽")
     df = get_inventory_df()
@@ -198,24 +204,27 @@ with tab1:
         if search_query:
             mask = df['商品名稱'].str.contains(search_query, case=False) | \
                    df['備註'].astype(str).str.contains(search_query, case=False)
-            df_display = df[mask]
+            df_display = df[mask].copy()
         else:
-            df_display = df
+            df_display = df.copy()
 
         if not df_display.empty:
             st.subheader(f"📋 清單 (共 {len(df_display)} 筆)")
             
+            # 處理圖片欄位：只取第一張圖來做列表顯示
+            # 1. 轉字串 2. 用逗號分割 3. 取第0個
             df_display['圖片連結'] = df_display['圖片連結'].astype(str).str.strip().replace('nan', '')
-            df_display['備註'] = df_display['備註'].astype(str).replace('nan', '')
+            df_display['主圖'] = df_display['圖片連結'].apply(lambda x: x.split(',')[0] if x else "")
 
             st.dataframe(
                 df_display,
                 column_config={
-                    "商品名稱": st.column_config.TextColumn("商品名稱 (ID)"),
-                    "圖片連結": st.column_config.ImageColumn("圖片", width="small"),
+                    "商品名稱": st.column_config.TextColumn("商品名稱"),
+                    "主圖": st.column_config.ImageColumn("圖片(首張)", width="small"),
                     "單價": st.column_config.NumberColumn(format="$%d"),
                     "備註": st.column_config.TextColumn("備註", width="medium"),
                 },
+                column_order=["商品名稱", "主圖", "數量", "單價", "備註"], # 隱藏原始的長字串連結
                 use_container_width=True,
                 hide_index=True
             )
@@ -228,56 +237,69 @@ with tab1:
                 st.info(f"**庫存**: {product_data['數量']} | **單價**: ${product_data['單價']}")
                 st.text_area("備註內容", value=product_data.get('備註',''), disabled=True, key="tab1_remark")
             with col_img:
-                img_url = str(product_data.get('圖片連結', '')).strip()
-                if img_url and len(img_url)>10:
-                    try: st.image(img_url, width=400)
-                    except: st.error("圖片無效")
+                # 這裡處理多張圖片顯示
+                raw_urls = str(product_data.get('圖片連結', '')).strip()
+                if raw_urls:
+                    url_list = [u.strip() for u in raw_urls.split(',') if u.strip()]
+                    if url_list:
+                        st.write(f"📸 共 {len(url_list)} 張圖片：")
+                        # 顯示圖片畫廊
+                        st.image(url_list, width=200) 
+                    else:
+                        st.info("🖼️ 無圖片")
+                else:
+                    st.info("🖼️ 無圖片")
         else:
             st.warning("無符合資料")
     else:
         st.info("無資料")
         if st.button("🔄 重新整理", key="refresh_empty"): st.rerun()
 
-# --- 定義一個鎖定畫面的函式 ---
-def show_login_block():
-    st.warning("🔒 **此功能僅限管理員使用**")
-    st.info("請使用左側欄位輸入密碼登入，即可解鎖此頁面。")
-    st.stop() # 停止執行下方程式碼
-
-# Tab 2: 進貨 (需登入)
+# Tab 2: 進貨 (支援多圖上傳)
 with tab2:
     st.header("商品進貨")
-    if not st.session_state["is_admin"]: show_login_block() # 權限檢查
+    if not st.session_state["is_admin"]: show_login_block()
 
     with st.form("add_form"):
-        p_name = st.text_input("商品名稱 (可輸入數字 ID)")
+        p_name = st.text_input("商品名稱 (ID)")
         c1, c2 = st.columns(2)
         p_qty = c1.number_input("數量", 1, value=10)
         p_price = c2.number_input("單價", 0, value=100)
         p_remarks = st.text_area("備註 (選填)")
         
         st.write("📸 圖片設定")
-        p_url = st.text_input("方式 A：連結", placeholder="https://...")
-        st.caption("--- 或 ---")
-        p_file = st.file_uploader("方式 B：上傳", type=['png','jpg'])
+        st.caption("支援上傳多張圖片，或輸入以逗號分隔的連結")
+        
+        # 1. 上傳多個檔案
+        p_files = st.file_uploader("方式 A：上傳圖片 (可多選)", type=['png','jpg','jpeg'], accept_multiple_files=True)
+        
+        # 2. 手動輸入連結
+        p_url_input = st.text_input("方式 B：貼上連結 (多張請用逗號隔開)", placeholder="https://img1.jpg, https://img2.jpg")
 
         if st.form_submit_button("確認進貨", type="primary"):
             if p_name:
-                final = p_url
-                if p_file:
-                    with st.spinner("上傳中..."):
-                        u = upload_image_to_imgbb(p_file)
-                        if u: final = u
-                with st.spinner("寫入中..."):
-                    add_product(p_name, p_qty, p_price, final, p_remarks)
+                final_urls_list = []
+                
+                # 處理手動輸入
+                if p_url_input:
+                    final_urls_list.extend([u.strip() for u in p_url_input.split(',') if u.strip()])
+
+                # 處理檔案上傳
+                if p_files:
+                    with st.spinner(f"正在上傳 {len(p_files)} 張圖片..."):
+                        for f in p_files:
+                            u = upload_image_to_imgbb(f)
+                            if u: final_urls_list.append(u)
+                
+                with st.spinner("寫入資料庫..."):
+                    add_product(p_name, p_qty, p_price, final_urls_list, p_remarks)
             else:
                 st.warning("請輸入名稱")
 
-# Tab 3: 銷貨 (需登入)
+# Tab 3: 銷貨
 with tab3:
     st.header("商品銷貨")
-    if not st.session_state["is_admin"]: show_login_block() # 權限檢查
-
+    if not st.session_state["is_admin"]: show_login_block()
     df = get_inventory_df()
     if not df.empty:
         with st.form("sell_form"):
@@ -287,15 +309,13 @@ with tab3:
     else:
         st.warning("無庫存")
 
-# Tab 4: 刪除 (需登入)
+# Tab 4: 刪除
 with tab4:
     st.header("刪除商品")
-    if not st.session_state["is_admin"]: show_login_block() # 權限檢查
-
+    if not st.session_state["is_admin"]: show_login_block()
     df = get_inventory_df()
     if not df.empty:
         if "del_mode" not in st.session_state: st.session_state["del_mode"] = False
-        
         c1, c2 = st.columns([3, 1])
         with c1:
             d_name = st.selectbox("選擇刪除對象", df['商品名稱'].tolist(), disabled=st.session_state["del_mode"], key="del_select")
@@ -305,7 +325,6 @@ with tab4:
                 st.session_state["del_mode"] = True
                 st.session_state["del_target"] = d_name
                 st.rerun()
-
         if st.session_state["del_mode"]:
             st.warning(f"確認刪除 **{st.session_state['del_target']}**？")
             k1, k2 = st.columns(2)
@@ -319,11 +338,10 @@ with tab4:
                     st.session_state["del_mode"] = False
                     st.rerun()
 
-# Tab 5: 編輯 (需登入)
+# Tab 5: 編輯 (多圖管理)
 with tab5:
     st.header("✏️ 編輯資料")
-    if not st.session_state["is_admin"]: show_login_block() # 權限檢查
-
+    if not st.session_state["is_admin"]: show_login_block()
     df = get_inventory_df()
     if not df.empty:
         edit_name = st.selectbox("選擇編輯對象", df['商品名稱'].tolist(), key="edit_select")
@@ -335,22 +353,42 @@ with tab5:
             n_price = k2.number_input("單價", 0, value=int(curr['單價']))
             n_rem = st.text_area("備註", value=str(curr.get('備註','')))
             
-            st.subheader("圖片")
-            c_url = str(curr.get('圖片連結','')).strip()
-            if c_url: st.image(c_url, width=150)
+            st.subheader("圖片管理")
+            raw_curr_urls = str(curr.get('圖片連結','')).strip()
             
-            n_url = st.text_input("連結", value=c_url)
-            st.caption("--- 或 ---")
-            n_file = st.file_uploader("上傳新圖", type=['png','jpg'], key="edit_file")
+            # 預覽目前圖片
+            if raw_curr_urls:
+                st.caption("目前圖片預覽：")
+                curr_url_list = [u.strip() for u in raw_curr_urls.split(',') if u.strip()]
+                st.image(curr_url_list, width=150)
             
-            if st.form_submit_button("儲存", type="primary"):
-                fin = n_url
-                if n_file:
-                    with st.spinner("上傳..."):
-                        u = upload_image_to_imgbb(n_file)
-                        if u: fin = u
-                with st.spinner("更新..."):
-                    update_product_info(edit_name, n_qty, n_price, fin, n_rem)
+            # 圖片編輯邏輯：使用文字框來管理所有連結 (這是最靈活的方式)
+            st.caption("👇 您可以在下方文字框中手動刪除或調整連結順序 (用逗號隔開)")
+            n_url_str = st.text_area("圖片連結清單", value=raw_curr_urls, height=100)
+            
+            st.write("➕ **新增更多圖片**")
+            n_files = st.file_uploader("上傳新圖片加入清單", type=['png','jpg'], accept_multiple_files=True, key="edit_files")
+            
+            if st.form_submit_button("儲存變更", type="primary"):
+                final_str = n_url_str
+                
+                # 如果有新上傳，則 append 到後方
+                if n_files:
+                    new_uploaded_urls = []
+                    with st.spinner(f"正在上傳 {len(n_files)} 張新圖片..."):
+                        for f in n_files:
+                            u = upload_image_to_imgbb(f)
+                            if u: new_uploaded_urls.append(u)
+                    
+                    if new_uploaded_urls:
+                        # 判斷原本是否為空，決定要不要加逗號
+                        if final_str.strip():
+                            final_str += "," + ",".join(new_uploaded_urls)
+                        else:
+                            final_str = ",".join(new_uploaded_urls)
+                
+                with st.spinner("更新資料庫..."):
+                    update_product_info(edit_name, n_qty, n_price, final_str, n_rem)
                     st.rerun()
     else:
         st.info("無資料")
