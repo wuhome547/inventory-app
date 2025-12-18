@@ -77,14 +77,13 @@ def show_login_block():
     st.info("請使用左側欄位輸入密碼登入。")
     st.stop()
 
-# --- 核心功能 (修復重複資料問題) ---
+# --- 核心功能 (修正：永遠抓取最新一筆) ---
 
 def get_inventory_df():
     sheet = get_worksheet()
     if sheet:
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
-        # 強制轉型，避免數字/文字混淆
         if '商品名稱' in df.columns: df['商品名稱'] = df['商品名稱'].astype(str)
         if '圖片連結' not in df.columns: df['圖片連結'] = ""
         if '備註' not in df.columns: df['備註'] = ""
@@ -93,27 +92,24 @@ def get_inventory_df():
 
 def find_product_cell(sheet, name):
     """
-    超級強化的搜尋函式：
-    直接讀取第一欄所有資料來比對，解決 'sheet.find' 對數字/文字判斷不穩的問題。
+    修正後的搜尋：尋找該名稱「最後一次出現」的位置 (Row)。
+    這樣可以確保我們總是編輯到最新的那筆資料。
     """
     target_name = str(name).strip()
-    
     try:
-        # 取得第一欄所有值 (商品名稱)
-        col_values = sheet.col_values(1) 
-        
-        # 找出對應的行數 (注意: col_values 的 index 從 0 開始，但 sheet row 從 1 開始)
-        # 這裡我們找 "最後一次出現" 的位置，這樣可以優先更新最新的一筆 (如果已重複)
-        # 但為了保險，我們先找第一個匹配的
-        
-        # 將所有值轉為字串比對
+        col_values = sheet.col_values(1) # 讀取第一欄
         str_values = [str(v).strip() for v in col_values]
         
+        # 使用 Python 的反向搜尋來找「最後一個」符合的索引
+        # rindex 不是內建的，我們用簡單的方式：反轉清單找第一個，再算回原本的 index
         if target_name in str_values:
-            # 找到 index，轉換成 row number (index + 1)
-            row_idx = str_values.index(target_name) + 1
-            return sheet.cell(row_idx, 1) # 回傳該儲存格物件
-        
+            # 找出所有符合的 index
+            all_indices = [i for i, x in enumerate(str_values) if x == target_name]
+            last_index = all_indices[-1] # 取最後一個
+            
+            # 回傳對應的儲存格 (Row index 要 +1)
+            return sheet.cell(last_index + 1, 1)
+            
         return None
     except Exception as e:
         st.error(f"搜尋錯誤: {e}")
@@ -134,7 +130,7 @@ def add_product(name, quantity, price, image_urls, remarks):
     cell = find_product_cell(sheet, name_str)
     
     if cell:
-        # 更新
+        # 更新 (只更新最後一筆)
         sheet.update_cell(cell.row, 2, int(sheet.cell(cell.row, 2).value) + quantity)
         sheet.update_cell(cell.row, 3, price)
         if final_url_str: sheet.update_cell(cell.row, 4, final_url_str)
@@ -163,6 +159,8 @@ def sell_product(name, quantity):
 def delete_product(name):
     sheet = get_worksheet()
     if not sheet: return
+    # 這裡可能需要迴圈刪除所有重複的？目前先刪除最後一筆
+    # 如果使用者多按幾次刪除，就會把重複的全部刪光
     cell = find_product_cell(sheet, name)
     if cell:
         sheet.delete_rows(cell.row)
@@ -204,7 +202,7 @@ st.title("☁️ 視覺化進銷存系統")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨 (限)", "➖ 銷貨 (限)", "❌ 刪除 (限)", "✏️ 編輯 (限)"])
 
-# Tab 1: 庫存圖牆 (修正顯示問題)
+# Tab 1: 庫存圖牆
 with tab1:
     st.header("庫存總覽")
     df = get_inventory_df()
@@ -230,9 +228,7 @@ with tab1:
             df_display['圖片連結'] = df_display['圖片連結'].astype(str).str.strip().replace('nan', '')
             df_display['主圖'] = df_display['圖片連結'].apply(lambda x: x.split(',')[0] if x else "")
 
-            # 為避免重複名稱導致的 key error，建議 selectbox 使用 unique 值
-            # 這裡我們處理顯示
-            
+            # 顯示表格 (這裡顯示所有符合的行，包含重複的)
             st.dataframe(
                 df_display,
                 column_config={
@@ -249,12 +245,12 @@ with tab1:
             st.divider()
             col_sel, col_img = st.columns([1, 2])
             with col_sel:
-                # 取得商品列表 (去重複)
+                # 這裡也要用 unique，避免選單出現兩個一樣的商品
                 unique_products = df_display['商品名稱'].unique().tolist()
                 selected_product = st.selectbox("選擇商品查看詳情", unique_products, key="tab1_select")
                 
-                # 關鍵修正：使用 iloc[-1] 取「最後一筆」(最新的一筆)，而不是 iloc[0]
-                # 這樣就算資料庫裡有舊的重複資料，這裡也會顯示最新的
+                # ⚠️ 關鍵修正：iloc[-1]
+                # 這行代碼的意思是：在所有叫這個名字的商品中，取「最後一個」(也就是最新的)
                 product_data = df[df['商品名稱'] == selected_product].iloc[-1]
                 
                 st.info(f"**庫存**: {product_data['數量']} | **單價**: ${product_data['單價']}")
@@ -277,7 +273,7 @@ with tab1:
         st.info("無資料")
         if st.button("🔄 重新整理", key="refresh_empty"): st.rerun()
 
-# Tab 2: 進貨 (多圖 + 強化搜尋)
+# Tab 2: 進貨
 with tab2:
     st.header("商品進貨")
     if not st.session_state["is_admin"]: show_login_block()
@@ -291,7 +287,7 @@ with tab2:
         
         st.write("📸 圖片設定")
         p_files = st.file_uploader("方式 A：上傳 (可多選)", type=['png','jpg','jpeg'], accept_multiple_files=True)
-        p_url_input = st.text_input("方式 B：貼上連結 (逗號隔開)", placeholder="https://...")
+        p_url_input = st.text_input("方式 B：連結 (逗號隔開)", placeholder="https://...")
 
         if st.form_submit_button("確認進貨", type="primary"):
             if p_name:
@@ -358,7 +354,7 @@ with tab5:
     df = get_inventory_df()
     if not df.empty:
         edit_name = st.selectbox("選擇編輯對象", df['商品名稱'].unique().tolist(), key="edit_select")
-        # 這裡也改成取最後一筆
+        # ⚠️ 這裡也改成 iloc[-1] (取最新)
         curr = df[df['商品名稱'] == str(edit_name)].iloc[-1]
         
         with st.form("edit_form"):
