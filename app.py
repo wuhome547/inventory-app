@@ -200,13 +200,13 @@ st.title("☁️ 視覺化進銷存系統")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨 (限)", "➖ 銷貨 (限)", "❌ 刪除 (限)", "✏️ 編輯 (限)"])
 
-# Tab 1: 庫存圖牆 (加入分類篩選)
+# Tab 1: 庫存圖牆 (修正：預設顯示未分類)
 with tab1:
     st.header("庫存總覽")
     df = get_inventory_df()
     
     if not df.empty:
-        # 1. 數據儀表板 (計算全體，不受篩選影響)
+        # 1. 數據儀表板
         total_items = len(df)
         total_qty = df['數量'].astype(int).sum()
         total_value = (df['數量'].astype(int) * df['單價'].astype(int)).sum()
@@ -222,13 +222,22 @@ with tab1:
         
         st.divider()
 
-        # 2. 篩選器區域 (分類 + 搜尋)
+        # 2. 篩選器區域
         c_filter, c_search, c_refresh = st.columns([2, 3, 1])
         
         with c_filter:
             # 取得所有分類
             all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
-            selected_cat = st.selectbox("📂 選擇分類篩選", all_cats)
+            
+            # --- 關鍵修改 ---
+            # 找出 "未分類" 在清單中的位置 (Index)
+            # 如果清單裡有 "未分類"，就以此為預設值；如果沒有，就預設選 "全部" (index 0)
+            default_index = 0
+            if "未分類" in all_cats:
+                default_index = all_cats.index("未分類")
+            
+            selected_cat = st.selectbox("📂 選擇分類篩選", all_cats, index=default_index)
+            # ----------------
             
         with c_search:
             search_query = st.text_input("🔍 關鍵字搜尋", placeholder="商品名稱...")
@@ -264,7 +273,7 @@ with tab1:
                     "單價": st.column_config.NumberColumn(format="$%d"),
                     "備註": st.column_config.TextColumn("備註", width="medium"),
                 },
-                column_order=["分類", "商品名稱", "主圖", "數量", "單價"], # 調整順序，分類放前面
+                column_order=["分類", "商品名稱", "主圖", "數量", "單價"],
                 use_container_width=True,
                 hide_index=True
             )
@@ -274,7 +283,6 @@ with tab1:
             # 詳細資料區
             c_sel, c_img = st.columns([1, 2])
             with c_sel:
-                # 選單只顯示「篩選後」的商品，這樣找東西超快
                 unique_products = df_display['商品名稱'].unique().tolist()
                 sel_prod = st.selectbox("查看詳情", unique_products, key="t1_sel")
                 
@@ -286,7 +294,6 @@ with tab1:
                 **庫存**: {p_data['數量']}
                 **單價**: ${p_data['單價']}
                 """)
-                # 這裡不顯示備註(已移除)
                 
             with c_img:
                 raw_urls = str(p_data.get('圖片連結', '')).strip()
@@ -297,6 +304,7 @@ with tab1:
             st.warning("沒有符合的商品。")
     else:
         st.info("尚無資料")
+
 
 # Tab 2: 進貨 (加入分類選擇)
 with tab2:
