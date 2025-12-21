@@ -77,17 +77,23 @@ def show_login_block():
     st.info("請使用左側欄位輸入密碼登入。")
     st.stop()
 
-# --- 核心功能 ---
+# --- 核心功能 (加入分類欄位) ---
 
 def get_inventory_df():
     sheet = get_worksheet()
     if sheet:
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
-        # 強制資料清洗
+        
+        # 資料清洗
         if '商品名稱' in df.columns: df['商品名稱'] = df['商品名稱'].astype(str).str.strip()
         if '圖片連結' not in df.columns: df['圖片連結'] = ""
         if '備註' not in df.columns: df['備註'] = ""
+        if '分類' not in df.columns: df['分類'] = "未分類" # 新增分類欄位防呆
+        
+        # 處理分類的空白或 NaN
+        df['分類'] = df['分類'].astype(str).replace('', '未分類').replace('nan', '未分類')
+        
         return df
     return pd.DataFrame()
 
@@ -96,9 +102,7 @@ def find_product_cell(sheet, name):
     try:
         col_values = sheet.col_values(1)
         str_values = [str(v).strip() for v in col_values]
-        
         if target_name in str_values:
-            # 找最後一個 (最新)
             all_indices = [i for i, x in enumerate(str_values) if x == target_name]
             last_index = all_indices[-1]
             return sheet.cell(last_index + 1, 1)
@@ -107,10 +111,12 @@ def find_product_cell(sheet, name):
         st.error(f"搜尋錯誤: {e}")
         return None
 
-def add_product(name, quantity, price, image_urls, remarks):
+def add_product(name, quantity, price, image_urls, remarks, category):
     sheet = get_worksheet()
     if not sheet: return
     name_str = str(name).strip()
+    cat_str = str(category).strip()
+    if not cat_str: cat_str = "未分類"
     
     if isinstance(image_urls, list):
         final_url_str = ",".join(image_urls)
@@ -122,14 +128,17 @@ def add_product(name, quantity, price, image_urls, remarks):
     cell = find_product_cell(sheet, name_str)
     
     if cell:
+        # 更新 (Col 1=名, 2=數, 3=價, 4=圖, 5=備, 6=類)
         sheet.update_cell(cell.row, 2, int(sheet.cell(cell.row, 2).value) + quantity)
         sheet.update_cell(cell.row, 3, price)
         if final_url_str: sheet.update_cell(cell.row, 4, final_url_str)
         if remarks: sheet.update_cell(cell.row, 5, remarks)
-        st.success(f"✅ 更新 '{name_str}'")
+        sheet.update_cell(cell.row, 6, cat_str) # 更新分類
+        st.success(f"✅ 更新 '{name_str}' (分類: {cat_str})")
     else:
-        sheet.append_row([name_str, quantity, price, final_url_str, remarks])
-        st.success(f"🆕 新增 '{name_str}'")
+        # 新增
+        sheet.append_row([name_str, quantity, price, final_url_str, remarks, cat_str])
+        st.success(f"🆕 新增 '{name_str}' (分類: {cat_str})")
 
 def sell_product(name, quantity):
     sheet = get_worksheet()
@@ -156,7 +165,7 @@ def delete_product(name):
     else:
         st.error(f"❌ 找不到商品")
 
-def update_product_info(name, new_qty, new_price, new_url_str, new_remarks):
+def update_product_info(name, new_qty, new_price, new_url_str, new_remarks, new_cat):
     sheet = get_worksheet()
     if not sheet: return
     clean_url_str = str(new_url_str).strip()
@@ -168,6 +177,7 @@ def update_product_info(name, new_qty, new_price, new_url_str, new_remarks):
         sheet.update_cell(cell.row, 3, new_price)
         sheet.update_cell(cell.row, 4, clean_url_str)
         sheet.update_cell(cell.row, 5, new_remarks)
+        sheet.update_cell(cell.row, 6, new_cat)
         st.success(f"✅ 更新成功")
     else:
         st.error(f"❌ 找不到商品")
@@ -190,195 +200,285 @@ st.title("☁️ 視覺化進銷存系統")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨 (限)", "➖ 銷貨 (限)", "❌ 刪除 (限)", "✏️ 編輯 (限)"])
 
-# Tab 1: 庫存圖牆 (已移除詳細區備註)
+# Tab 1: 庫存圖牆 (加入分類篩選)
 with tab1:
     st.header("庫存總覽")
     df = get_inventory_df()
     
     if not df.empty:
-        col_search, col_refresh = st.columns([4, 1])
-        with col_search:
-            search_query = st.text_input("🔍 搜尋商品", "", placeholder="例如：123、紅色...")
-        with col_refresh:
-            st.write(""); st.write("")
-            if st.button("🔄 重新整理", key="refresh_tab1"): st.rerun()
+        # 1. 數據儀表板 (計算全體，不受篩選影響)
+        total_items = len(df)
+        total_qty = df['數量'].astype(int).sum()
+        total_value = (df['數量'].astype(int) * df['單價'].astype(int)).sum()
+        low_stock_df = df[df['數量'].astype(int) < 5]
+        
+        m1, m2, m3 = st.columns(3)
+        m1.metric("📦 商品總數", f"{total_items} 款", f"庫存 {total_qty}")
+        m2.metric("💰 總市值", f"${total_value:,}")
+        m3.metric("⚠️ 缺貨預警", f"{len(low_stock_df)} 款", delta_color="inverse")
+        if not low_stock_df.empty:
+            with st.expander(f"🚨 查看 {len(low_stock_df)} 款缺貨商品"):
+                st.dataframe(low_stock_df[['商品名稱', '數量', '分類']], hide_index=True)
+        
+        st.divider()
 
+        # 2. 篩選器區域 (分類 + 搜尋)
+        c_filter, c_search, c_refresh = st.columns([2, 3, 1])
+        
+        with c_filter:
+            # 取得所有分類
+            all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
+            selected_cat = st.selectbox("📂 選擇分類篩選", all_cats)
+            
+        with c_search:
+            search_query = st.text_input("🔍 關鍵字搜尋", placeholder="商品名稱...")
+            
+        with c_refresh:
+            st.write(""); st.write("")
+            if st.button("🔄 重新整理"): st.rerun()
+
+        # 3. 執行篩選邏輯
+        df_display = df.copy()
+        
+        # 先篩分類
+        if selected_cat != "全部":
+            df_display = df_display[df_display['分類'] == selected_cat]
+            
+        # 再篩關鍵字
         if search_query:
-            mask = df['商品名稱'].str.contains(search_query, case=False) | \
-                   df['備註'].astype(str).str.contains(search_query, case=False)
-            df_display = df[mask].copy()
-        else:
-            df_display = df.copy()
+            mask = df_display['商品名稱'].str.contains(search_query, case=False)
+            df_display = df_display[mask]
 
         if not df_display.empty:
-            st.subheader(f"📋 清單 (共 {len(df_display)} 筆)")
+            st.subheader(f"📋 商品清單 ({len(df_display)} 筆)")
             
             df_display['圖片連結'] = df_display['圖片連結'].astype(str).str.strip().replace('nan', '')
             df_display['主圖'] = df_display['圖片連結'].apply(lambda x: x.split(',')[0] if x else "")
             
-            unique_options = df_display['商品名稱'].unique().tolist()
-
             st.dataframe(
                 df_display,
                 column_config={
                     "商品名稱": st.column_config.TextColumn("商品名稱"),
-                    "主圖": st.column_config.ImageColumn("圖片(首張)", width="small"),
+                    "分類": st.column_config.TextColumn("分類", width="small"),
+                    "主圖": st.column_config.ImageColumn("圖片", width="small"),
                     "單價": st.column_config.NumberColumn(format="$%d"),
                     "備註": st.column_config.TextColumn("備註", width="medium"),
                 },
-                column_order=["商品名稱", "主圖", "數量", "單價", "備註"],
+                column_order=["分類", "商品名稱", "主圖", "數量", "單價"], # 調整順序，分類放前面
                 use_container_width=True,
                 hide_index=True
             )
             
             st.divider()
-            col_sel, col_img = st.columns([1, 2])
-            with col_sel:
-                selected_product = st.selectbox("選擇商品查看詳情", unique_options, key="tab1_select")
+            
+            # 詳細資料區
+            c_sel, c_img = st.columns([1, 2])
+            with c_sel:
+                # 選單只顯示「篩選後」的商品，這樣找東西超快
+                unique_products = df_display['商品名稱'].unique().tolist()
+                sel_prod = st.selectbox("查看詳情", unique_products, key="t1_sel")
                 
-                subset = df[df['商品名稱'] == selected_product]
+                # 取最新一筆
+                p_data = df[df['商品名稱'] == sel_prod].iloc[-1]
                 
-                if not subset.empty:
-                    product_data = subset.iloc[-1]
-                    st.info(f"**庫存**: {product_data['數量']} | **單價**: ${product_data['單價']}")
-                    
-                    # 🗑️ 已刪除：備註內容的 text_area
-                    
-                    current_images = str(product_data.get('圖片連結', '')).strip()
-                else:
-                    st.error("❌ 讀取資料失敗")
-                    current_images = ""
+                st.info(f"""
+                **分類**: {p_data['分類']}
+                **庫存**: {p_data['數量']}
+                **單價**: ${p_data['單價']}
+                """)
+                # 這裡不顯示備註(已移除)
                 
-            with col_img:
-                if current_images:
-                    url_list = [u.strip() for u in current_images.split(',') if u.strip()]
-                    if url_list:
-                        st.write(f"📸 共 {len(url_list)} 張圖片：")
-                        st.image(url_list, width=200) 
-                    else:
-                        st.info("🖼️ 無圖片")
-                else:
-                    st.info("🖼️ 無圖片")
+            with c_img:
+                raw_urls = str(p_data.get('圖片連結', '')).strip()
+                if raw_urls:
+                    urls = [u.strip() for u in raw_urls.split(',') if u.strip()]
+                    if urls: st.image(urls, width=150)
         else:
-            st.warning("無符合資料")
+            st.warning("沒有符合的商品。")
     else:
-        st.info("無資料")
-        if st.button("🔄 重新整理", key="refresh_empty"): st.rerun()
+        st.info("尚無資料")
 
-# Tab 2: 進貨
+# Tab 2: 進貨 (加入分類選擇)
 with tab2:
     st.header("商品進貨")
     if not st.session_state["is_admin"]: show_login_block()
 
+    df = get_inventory_df()
+    # 取得現有分類列表，方便使用者選擇
+    existing_cats = sorted(df['分類'].unique().tolist()) if not df.empty else []
+    if "未分類" not in existing_cats: existing_cats.append("未分類")
+
     with st.form("add_form"):
+        # 分類選擇邏輯
+        st.write("📂 **商品分類**")
+        cat_mode = st.radio("選擇方式", ["選擇現有分類", "輸入新分類"], horizontal=True, label_visibility="collapsed")
+        
+        p_cat = "未分類"
+        if cat_mode == "選擇現有分類":
+            p_cat = st.selectbox("選擇分類", existing_cats)
+        else:
+            p_cat = st.text_input("輸入新分類名稱", placeholder="例如：鞋子、飾品...")
+
+        st.write("📦 **基本資料**")
         p_name = st.text_input("商品名稱 (ID)")
         c1, c2 = st.columns(2)
         p_qty = c1.number_input("數量", 1, value=10)
         p_price = c2.number_input("單價", 0, value=100)
-        p_remarks = st.text_area("備註 (選填)")
+        p_remarks = st.text_area("備註")
         
-        st.write("📸 圖片設定")
-        p_files = st.file_uploader("方式 A：上傳 (可多選)", type=['png','jpg','jpeg'], accept_multiple_files=True)
-        p_url_input = st.text_input("方式 B：連結 (逗號隔開)", placeholder="https://...")
+        st.write("📸 **圖片**")
+        p_files = st.file_uploader("上傳", type=['png','jpg'], accept_multiple_files=True)
+        p_url = st.text_input("或貼上連結")
 
         if st.form_submit_button("確認進貨", type="primary"):
             if p_name:
-                final_urls_list = []
-                if p_url_input:
-                    final_urls_list.extend([u.strip() for u in p_url_input.split(',') if u.strip()])
+                # 確保分類有值
+                if not p_cat.strip(): p_cat = "未分類"
+                
+                urls = []
+                if p_url: urls.extend([u.strip() for u in p_url.split(',') if u.strip()])
                 if p_files:
-                    with st.spinner(f"正在上傳 {len(p_files)} 張圖片..."):
+                    with st.spinner("上傳中..."):
                         for f in p_files:
                             u = upload_image_to_imgbb(f)
-                            if u: final_urls_list.append(u)
+                            if u: urls.append(u)
                 
-                with st.spinner("寫入資料庫..."):
-                    add_product(p_name, p_qty, p_price, final_urls_list, p_remarks)
+                with st.spinner("寫入中..."):
+                    add_product(p_name, p_qty, p_price, urls, p_remarks, p_cat)
             else:
                 st.warning("請輸入名稱")
 
-# Tab 3: 銷貨
+# Tab 3: 銷貨 (分類連動)
 with tab3:
     st.header("商品銷貨")
     if not st.session_state["is_admin"]: show_login_block()
     df = get_inventory_df()
+    
     if not df.empty:
-        with st.form("sell_form"):
-            s_name = st.selectbox("選擇商品", df['商品名稱'].unique().tolist(), key="sell_select")
-            s_qty = st.number_input("數量", 1)
-            if st.form_submit_button("銷貨"): sell_product(s_name, s_qty)
+        # 連動篩選機制
+        all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
+        filter_cat = st.selectbox("先選擇分類 (可加速尋找)", all_cats, key="sell_filter")
+        
+        # 根據分類過濾商品列表
+        if filter_cat != "全部":
+            filtered_df = df[df['分類'] == filter_cat]
+        else:
+            filtered_df = df
+            
+        prod_list = filtered_df['商品名稱'].unique().tolist()
+        
+        if prod_list:
+            with st.form("sell_form"):
+                s_name = st.selectbox("選擇商品", prod_list)
+                s_qty = st.number_input("數量", 1)
+                if st.form_submit_button("確認銷貨", type="primary"):
+                    sell_product(s_name, s_qty)
+        else:
+            st.warning("此分類下無商品")
     else:
         st.warning("無庫存")
 
-# Tab 4: 刪除
+# Tab 4: 刪除 (分類連動)
 with tab4:
     st.header("刪除商品")
     if not st.session_state["is_admin"]: show_login_block()
     df = get_inventory_df()
+    
     if not df.empty:
         if "del_mode" not in st.session_state: st.session_state["del_mode"] = False
+        
+        # 連動篩選
+        all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
+        filter_cat = st.selectbox("篩選分類", all_cats, key="del_filter", disabled=st.session_state["del_mode"])
+        
+        if filter_cat != "全部":
+            filtered_df = df[df['分類'] == filter_cat]
+        else:
+            filtered_df = df
+            
+        prod_list = filtered_df['商品名稱'].unique().tolist()
+
         c1, c2 = st.columns([3, 1])
         with c1:
-            d_name = st.selectbox("選擇刪除對象", df['商品名稱'].unique().tolist(), disabled=st.session_state["del_mode"], key="del_select")
+            d_name = st.selectbox("選擇商品", prod_list, disabled=st.session_state["del_mode"], key="del_sel")
         with c2:
             st.write(""); st.write("")
-            if st.button("🗑️ 刪除", type="primary", disabled=st.session_state["del_mode"], key="del_btn_init"):
+            if st.button("🗑️ 刪除", type="primary", disabled=st.session_state["del_mode"]):
                 st.session_state["del_mode"] = True
                 st.session_state["del_target"] = d_name
                 st.rerun()
+        
         if st.session_state["del_mode"]:
             st.warning(f"確認刪除 **{st.session_state['del_target']}**？")
             k1, k2 = st.columns(2)
             with k1:
-                if st.button("✅ 確認", use_container_width=True, key="del_confirm"):
+                if st.button("✅ 確認"):
                     delete_product(st.session_state["del_target"])
                     st.session_state["del_mode"] = False
                     st.rerun()
             with k2:
-                if st.button("❌ 取消", use_container_width=True, key="del_cancel"):
+                if st.button("❌ 取消"):
                     st.session_state["del_mode"] = False
                     st.rerun()
 
-# Tab 5: 編輯
+# Tab 5: 編輯 (分類也可編輯)
 with tab5:
     st.header("✏️ 編輯資料")
     if not st.session_state["is_admin"]: show_login_block()
     df = get_inventory_df()
+    
     if not df.empty:
-        edit_name = st.selectbox("選擇編輯對象", df['商品名稱'].unique().tolist(), key="edit_select")
-        curr = df[df['商品名稱'] == str(edit_name)].iloc[-1]
+        # 連動篩選
+        all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
+        filter_cat = st.selectbox("篩選分類", all_cats, key="edit_filter")
         
-        with st.form("edit_form"):
-            k1, k2 = st.columns(2)
-            n_qty = k1.number_input("庫存", 0, value=int(curr['數量']))
-            n_price = k2.number_input("單價", 0, value=int(curr['單價']))
-            n_rem = st.text_area("備註", value=str(curr.get('備註','')))
+        if filter_cat != "全部":
+            filtered_df = df[df['分類'] == filter_cat]
+        else:
+            filtered_df = df
+        
+        prod_list = filtered_df['商品名稱'].unique().tolist()
+        
+        if prod_list:
+            edit_name = st.selectbox("選擇商品", prod_list, key="edit_sel")
+            curr = df[df['商品名稱'] == str(edit_name)].iloc[-1]
             
-            st.subheader("圖片管理")
-            raw_curr_urls = str(curr.get('圖片連結','')).strip()
-            if raw_curr_urls:
-                st.caption("預覽：")
-                curr_url_list = [u.strip() for u in raw_curr_urls.split(',') if u.strip()]
-                st.image(curr_url_list, width=150)
-            
-            n_url_str = st.text_area("圖片連結清單 (可手動刪改)", value=raw_curr_urls, height=100)
-            st.write("➕ 新增圖片")
-            n_files = st.file_uploader("上傳加入", type=['png','jpg'], accept_multiple_files=True, key="edit_files")
-            
-            if st.form_submit_button("儲存變更", type="primary"):
-                final_str = n_url_str
-                if n_files:
-                    new_uploaded_urls = []
-                    with st.spinner(f"上傳中..."):
-                        for f in n_files:
-                            u = upload_image_to_imgbb(f)
-                            if u: new_uploaded_urls.append(u)
-                    if new_uploaded_urls:
-                        if final_str.strip(): final_str += "," + ",".join(new_uploaded_urls)
-                        else: final_str = ",".join(new_uploaded_urls)
+            st.divider()
+            with st.form("edit_form"):
+                st.write("📂 **分類設定**")
+                # 讓使用者可以換分類
+                curr_cat = str(curr.get('分類', '未分類'))
+                # 這裡簡單一點，直接用文字框修改，或者選現有的
+                # 為了彈性，我們提供一個文字框，預設填入目前的分類
+                n_cat = st.text_input("分類名稱", value=curr_cat)
                 
-                with st.spinner("更新資料庫..."):
-                    update_product_info(edit_name, n_qty, n_price, final_str, n_rem)
-                    st.rerun()
+                st.write("📦 **基本資料**")
+                c1, c2 = st.columns(2)
+                n_qty = c1.number_input("庫存", 0, value=int(curr['數量']))
+                n_price = c2.number_input("單價", 0, value=int(curr['單價']))
+                n_rem = st.text_area("備註", value=str(curr.get('備註','')))
+                
+                st.write("📸 **圖片管理**")
+                raw_urls = str(curr.get('圖片連結','')).strip()
+                if raw_urls:
+                    st.image([u.strip() for u in raw_urls.split(',') if u.strip()], width=100)
+                n_url_str = st.text_area("圖片連結 (逗號分隔)", value=raw_urls)
+                n_files = st.file_uploader("新增圖片", type=['png','jpg'], accept_multiple_files=True)
+                
+                if st.form_submit_button("儲存變更", type="primary"):
+                    final_str = n_url_str
+                    if n_files:
+                        new_urls = []
+                        with st.spinner("上傳中..."):
+                            for f in n_files:
+                                u = upload_image_to_imgbb(f)
+                                if u: new_urls.append(u)
+                        if new_urls:
+                            if final_str.strip(): final_str += "," + ",".join(new_urls)
+                            else: final_str = ",".join(new_urls)
+                    
+                    with st.spinner("更新中..."):
+                        update_product_info(edit_name, n_qty, n_price, final_str, n_rem, n_cat)
+                        st.rerun()
     else:
         st.info("無資料")
