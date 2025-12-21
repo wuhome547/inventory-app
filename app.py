@@ -77,7 +77,7 @@ def show_login_block():
     st.info("請使用左側欄位輸入密碼登入。")
     st.stop()
 
-# --- 核心功能 (加入分類欄位) ---
+# --- 核心功能 ---
 
 def get_inventory_df():
     sheet = get_worksheet()
@@ -85,15 +85,12 @@ def get_inventory_df():
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
         
-        # 資料清洗
         if '商品名稱' in df.columns: df['商品名稱'] = df['商品名稱'].astype(str).str.strip()
         if '圖片連結' not in df.columns: df['圖片連結'] = ""
         if '備註' not in df.columns: df['備註'] = ""
-        if '分類' not in df.columns: df['分類'] = "未分類" # 新增分類欄位防呆
+        if '分類' not in df.columns: df['分類'] = "未分類"
         
-        # 處理分類的空白或 NaN
         df['分類'] = df['分類'].astype(str).replace('', '未分類').replace('nan', '未分類')
-        
         return df
     return pd.DataFrame()
 
@@ -128,15 +125,13 @@ def add_product(name, quantity, price, image_urls, remarks, category):
     cell = find_product_cell(sheet, name_str)
     
     if cell:
-        # 更新 (Col 1=名, 2=數, 3=價, 4=圖, 5=備, 6=類)
         sheet.update_cell(cell.row, 2, int(sheet.cell(cell.row, 2).value) + quantity)
         sheet.update_cell(cell.row, 3, price)
         if final_url_str: sheet.update_cell(cell.row, 4, final_url_str)
         if remarks: sheet.update_cell(cell.row, 5, remarks)
-        sheet.update_cell(cell.row, 6, cat_str) # 更新分類
+        sheet.update_cell(cell.row, 6, cat_str)
         st.success(f"✅ 更新 '{name_str}' (分類: {cat_str})")
     else:
-        # 新增
         sheet.append_row([name_str, quantity, price, final_url_str, remarks, cat_str])
         st.success(f"🆕 新增 '{name_str}' (分類: {cat_str})")
 
@@ -186,6 +181,7 @@ def update_product_info(name, new_qty, new_price, new_url_str, new_remarks, new_
 st.set_page_config(page_title="雲端進銷存", layout="wide")
 
 if "is_admin" not in st.session_state: st.session_state["is_admin"] = False
+if "low_stock_limit" not in st.session_state: st.session_state["low_stock_limit"] = 5 # 預設值
 
 with st.sidebar:
     st.header("👤 用戶登入")
@@ -194,50 +190,55 @@ with st.sidebar:
         st.info("💡 未登入僅能瀏覽")
     else:
         st.success("✅ 已登入")
+        st.divider()
+        st.subheader("⚙️ 系統設定")
+        # 新增：調整低庫存門檻
+        st.session_state["low_stock_limit"] = st.slider(
+            "🔴 低庫存警告門檻", 
+            min_value=1, 
+            max_value=100, 
+            value=st.session_state["low_stock_limit"],
+            help="當商品數量低於此數值時，會在首頁顯示警告。"
+        )
+        st.write(f"目前設定：低於 **{st.session_state['low_stock_limit']}** 個視為缺貨")
+        
+        st.divider()
         if st.button("登出"): logout()
 
 st.title("☁️ 視覺化進銷存系統")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨 (限)", "➖ 銷貨 (限)", "❌ 刪除 (限)", "✏️ 編輯 (限)"])
 
-# Tab 1: 庫存圖牆 (修正：預設顯示未分類)
+# Tab 1: 庫存圖牆
 with tab1:
     st.header("庫存總覽")
     df = get_inventory_df()
     
     if not df.empty:
-        # 1. 數據儀表板
         total_items = len(df)
         total_qty = df['數量'].astype(int).sum()
         total_value = (df['數量'].astype(int) * df['單價'].astype(int)).sum()
-        low_stock_df = df[df['數量'].astype(int) < 5]
+        
+        # 使用設定好的門檻
+        limit = st.session_state["low_stock_limit"]
+        low_stock_df = df[df['數量'].astype(int) < limit]
         
         m1, m2, m3 = st.columns(3)
         m1.metric("📦 商品總數", f"{total_items} 款", f"庫存 {total_qty}")
         m2.metric("💰 總市值", f"${total_value:,}")
-        m3.metric("⚠️ 缺貨預警", f"{len(low_stock_df)} 款", delta_color="inverse")
+        m3.metric(f"⚠️ 缺貨 (<{limit})", f"{len(low_stock_df)} 款", delta_color="inverse")
         if not low_stock_df.empty:
             with st.expander(f"🚨 查看 {len(low_stock_df)} 款缺貨商品"):
                 st.dataframe(low_stock_df[['商品名稱', '數量', '分類']], hide_index=True)
         
         st.divider()
 
-        # 2. 篩選器區域
         c_filter, c_search, c_refresh = st.columns([2, 3, 1])
-        
         with c_filter:
-            # 取得所有分類
             all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
-            
-            # --- 關鍵修改 ---
-            # 找出 "未分類" 在清單中的位置 (Index)
-            # 如果清單裡有 "未分類"，就以此為預設值；如果沒有，就預設選 "全部" (index 0)
             default_index = 0
-            if "未分類" in all_cats:
-                default_index = all_cats.index("未分類")
-            
+            if "未分類" in all_cats: default_index = all_cats.index("未分類")
             selected_cat = st.selectbox("📂 選擇分類篩選", all_cats, index=default_index)
-            # ----------------
             
         with c_search:
             search_query = st.text_input("🔍 關鍵字搜尋", placeholder="商品名稱...")
@@ -246,14 +247,9 @@ with tab1:
             st.write(""); st.write("")
             if st.button("🔄 重新整理"): st.rerun()
 
-        # 3. 執行篩選邏輯
         df_display = df.copy()
-        
-        # 先篩分類
         if selected_cat != "全部":
             df_display = df_display[df_display['分類'] == selected_cat]
-            
-        # 再篩關鍵字
         if search_query:
             mask = df_display['商品名稱'].str.contains(search_query, case=False)
             df_display = df_display[mask]
@@ -280,15 +276,11 @@ with tab1:
             
             st.divider()
             
-            # 詳細資料區
             c_sel, c_img = st.columns([1, 2])
             with c_sel:
                 unique_products = df_display['商品名稱'].unique().tolist()
                 sel_prod = st.selectbox("查看詳情", unique_products, key="t1_sel")
-                
-                # 取最新一筆
                 p_data = df[df['商品名稱'] == sel_prod].iloc[-1]
-                
                 st.info(f"""
                 **分類**: {p_data['分類']}
                 **庫存**: {p_data['數量']}
@@ -305,22 +297,18 @@ with tab1:
     else:
         st.info("尚無資料")
 
-
-# Tab 2: 進貨 (加入分類選擇)
+# Tab 2: 進貨
 with tab2:
     st.header("商品進貨")
     if not st.session_state["is_admin"]: show_login_block()
 
     df = get_inventory_df()
-    # 取得現有分類列表，方便使用者選擇
     existing_cats = sorted(df['分類'].unique().tolist()) if not df.empty else []
     if "未分類" not in existing_cats: existing_cats.append("未分類")
 
     with st.form("add_form"):
-        # 分類選擇邏輯
         st.write("📂 **商品分類**")
         cat_mode = st.radio("選擇方式", ["選擇現有分類", "輸入新分類"], horizontal=True, label_visibility="collapsed")
-        
         p_cat = "未分類"
         if cat_mode == "選擇現有分類":
             p_cat = st.selectbox("選擇分類", existing_cats)
@@ -340,9 +328,7 @@ with tab2:
 
         if st.form_submit_button("確認進貨", type="primary"):
             if p_name:
-                # 確保分類有值
                 if not p_cat.strip(): p_cat = "未分類"
-                
                 urls = []
                 if p_url: urls.extend([u.strip() for u in p_url.split(',') if u.strip()])
                 if p_files:
@@ -356,22 +342,18 @@ with tab2:
             else:
                 st.warning("請輸入名稱")
 
-# Tab 3: 銷貨 (分類連動)
+# Tab 3: 銷貨
 with tab3:
     st.header("商品銷貨")
     if not st.session_state["is_admin"]: show_login_block()
     df = get_inventory_df()
     
     if not df.empty:
-        # 連動篩選機制
         all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
         filter_cat = st.selectbox("先選擇分類 (可加速尋找)", all_cats, key="sell_filter")
         
-        # 根據分類過濾商品列表
-        if filter_cat != "全部":
-            filtered_df = df[df['分類'] == filter_cat]
-        else:
-            filtered_df = df
+        if filter_cat != "全部": filtered_df = df[df['分類'] == filter_cat]
+        else: filtered_df = df
             
         prod_list = filtered_df['商品名稱'].unique().tolist()
         
@@ -386,7 +368,7 @@ with tab3:
     else:
         st.warning("無庫存")
 
-# Tab 4: 刪除 (分類連動)
+# Tab 4: 刪除
 with tab4:
     st.header("刪除商品")
     if not st.session_state["is_admin"]: show_login_block()
@@ -394,16 +376,11 @@ with tab4:
     
     if not df.empty:
         if "del_mode" not in st.session_state: st.session_state["del_mode"] = False
-        
-        # 連動篩選
         all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
         filter_cat = st.selectbox("篩選分類", all_cats, key="del_filter", disabled=st.session_state["del_mode"])
         
-        if filter_cat != "全部":
-            filtered_df = df[df['分類'] == filter_cat]
-        else:
-            filtered_df = df
-            
+        if filter_cat != "全部": filtered_df = df[df['分類'] == filter_cat]
+        else: filtered_df = df
         prod_list = filtered_df['商品名稱'].unique().tolist()
 
         c1, c2 = st.columns([3, 1])
@@ -415,7 +392,6 @@ with tab4:
                 st.session_state["del_mode"] = True
                 st.session_state["del_target"] = d_name
                 st.rerun()
-        
         if st.session_state["del_mode"]:
             st.warning(f"確認刪除 **{st.session_state['del_target']}**？")
             k1, k2 = st.columns(2)
@@ -429,22 +405,17 @@ with tab4:
                     st.session_state["del_mode"] = False
                     st.rerun()
 
-# Tab 5: 編輯 (分類也可編輯)
+# Tab 5: 編輯
 with tab5:
     st.header("✏️ 編輯資料")
     if not st.session_state["is_admin"]: show_login_block()
     df = get_inventory_df()
     
     if not df.empty:
-        # 連動篩選
         all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
         filter_cat = st.selectbox("篩選分類", all_cats, key="edit_filter")
-        
-        if filter_cat != "全部":
-            filtered_df = df[df['分類'] == filter_cat]
-        else:
-            filtered_df = df
-        
+        if filter_cat != "全部": filtered_df = df[df['分類'] == filter_cat]
+        else: filtered_df = df
         prod_list = filtered_df['商品名稱'].unique().tolist()
         
         if prod_list:
@@ -454,10 +425,7 @@ with tab5:
             st.divider()
             with st.form("edit_form"):
                 st.write("📂 **分類設定**")
-                # 讓使用者可以換分類
                 curr_cat = str(curr.get('分類', '未分類'))
-                # 這裡簡單一點，直接用文字框修改，或者選現有的
-                # 為了彈性，我們提供一個文字框，預設填入目前的分類
                 n_cat = st.text_input("分類名稱", value=curr_cat)
                 
                 st.write("📦 **基本資料**")
