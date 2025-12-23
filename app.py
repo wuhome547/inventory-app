@@ -227,14 +227,14 @@ def add_vendor(name, contact, phone, address, remarks):
     sheet = get_worksheet("vendors")
     if not sheet: return
     name_str = str(name).strip()
+    
     try:
-        existing = sheet.col_values(1)
-        if name_str in existing:
-            st.warning(f"⚠️ 廠商 '{name_str}' 已存在")
-            return
+        # 後端只負責寫入
         sheet.append_row([name_str, contact, phone, address, remarks])
-        st.success(f"🏭 已新增廠商")
-    except: st.error("新增失敗")
+        st.success(f"🏭 已成功新增廠商：'{name_str}'")
+    except Exception as e:
+        st.error(f"新增失敗: {e}")
+
 
 def delete_vendor(name):
     sheet = get_worksheet("vendors")
@@ -557,7 +557,7 @@ with tab6:
     
     st.divider()
     c_add, c_del = st.columns(2)
-    with c_add:
+        with c_add:
         st.subheader("➕ 新增廠商")
         with st.form("add_vendor_form"):
             v_name = st.text_input("廠商名稱 (必填)")
@@ -566,12 +566,23 @@ with tab6:
             v_addr = st.text_input("地址")
             v_rem = st.text_area("備註")
             
-            if st.form_submit_button("新增", type="primary"):
+            # 使用 callback 機制或直接檢查
+            submitted = st.form_submit_button("新增", type="primary")
+            
+            if submitted:
                 if v_name:
-                    add_vendor(v_name, v_contact, v_phone, v_addr, v_rem)
-                    st.rerun()
+                    # 先在前端做簡單檢查，避免後端重整刷掉訊息
+                    current_vendors = v_df['廠商名稱'].astype(str).tolist() if not v_df.empty else []
+                    
+                    if v_name in current_vendors:
+                        st.error(f"❌ 廠商 '{v_name}' 已存在！")
+                        # 這裡不執行 rerun，讓錯誤訊息停留在畫面上
+                    else:
+                        add_vendor(v_name, v_contact, v_phone, v_addr, v_rem)
+                        st.rerun()
                 else:
                     st.warning("請輸入名稱")
+
 
     with c_del:
         st.subheader("❌ 刪除廠商")
