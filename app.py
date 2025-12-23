@@ -77,7 +77,7 @@ def show_login_block():
     st.info("請使用左側欄位輸入密碼登入。")
     st.stop()
 
-# --- 核心功能 ---
+# --- 核心功能 (新增廠商欄位) ---
 
 def get_inventory_df():
     sheet = get_worksheet()
@@ -89,8 +89,10 @@ def get_inventory_df():
         if '圖片連結' not in df.columns: df['圖片連結'] = ""
         if '備註' not in df.columns: df['備註'] = ""
         if '分類' not in df.columns: df['分類'] = "未分類"
+        if '廠商' not in df.columns: df['廠商'] = "" # 新增廠商欄位
         
         df['分類'] = df['分類'].astype(str).replace('', '未分類').replace('nan', '未分類')
+        df['廠商'] = df['廠商'].astype(str).replace('nan', '')
         return df
     return pd.DataFrame()
 
@@ -108,12 +110,13 @@ def find_product_cell(sheet, name):
         st.error(f"搜尋錯誤: {e}")
         return None
 
-def add_product(name, quantity, price, image_urls, remarks, category):
+def add_product(name, quantity, price, image_urls, remarks, category, supplier):
     sheet = get_worksheet()
     if not sheet: return
     name_str = str(name).strip()
     cat_str = str(category).strip()
     if not cat_str: cat_str = "未分類"
+    supp_str = str(supplier).strip()
     
     if isinstance(image_urls, list):
         final_url_str = ",".join(image_urls)
@@ -125,15 +128,18 @@ def add_product(name, quantity, price, image_urls, remarks, category):
     cell = find_product_cell(sheet, name_str)
     
     if cell:
+        # 更新 (Col 1-7)
         sheet.update_cell(cell.row, 2, int(sheet.cell(cell.row, 2).value) + quantity)
         sheet.update_cell(cell.row, 3, price)
         if final_url_str: sheet.update_cell(cell.row, 4, final_url_str)
         if remarks: sheet.update_cell(cell.row, 5, remarks)
         sheet.update_cell(cell.row, 6, cat_str)
-        st.success(f"✅ 更新 '{name_str}' (分類: {cat_str})")
+        sheet.update_cell(cell.row, 7, supp_str) # 更新廠商
+        st.success(f"✅ 更新 '{name_str}'")
     else:
-        sheet.append_row([name_str, quantity, price, final_url_str, remarks, cat_str])
-        st.success(f"🆕 新增 '{name_str}' (分類: {cat_str})")
+        # 新增
+        sheet.append_row([name_str, quantity, price, final_url_str, remarks, cat_str, supp_str])
+        st.success(f"🆕 新增 '{name_str}'")
 
 def sell_product(name, quantity):
     sheet = get_worksheet()
@@ -160,7 +166,7 @@ def delete_product(name):
     else:
         st.error(f"❌ 找不到商品")
 
-def update_product_info(name, new_qty, new_price, new_url_str, new_remarks, new_cat):
+def update_product_info(name, new_qty, new_price, new_url_str, new_remarks, new_cat, new_supp):
     sheet = get_worksheet()
     if not sheet: return
     clean_url_str = str(new_url_str).strip()
@@ -173,6 +179,7 @@ def update_product_info(name, new_qty, new_price, new_url_str, new_remarks, new_
         sheet.update_cell(cell.row, 4, clean_url_str)
         sheet.update_cell(cell.row, 5, new_remarks)
         sheet.update_cell(cell.row, 6, new_cat)
+        sheet.update_cell(cell.row, 7, new_supp)
         st.success(f"✅ 更新成功")
     else:
         st.error(f"❌ 找不到商品")
@@ -181,7 +188,7 @@ def update_product_info(name, new_qty, new_price, new_url_str, new_remarks, new_
 st.set_page_config(page_title="雲端進銷存", layout="wide")
 
 if "is_admin" not in st.session_state: st.session_state["is_admin"] = False
-if "low_stock_limit" not in st.session_state: st.session_state["low_stock_limit"] = 5 # 預設值
+if "low_stock_limit" not in st.session_state: st.session_state["low_stock_limit"] = 5
 
 with st.sidebar:
     st.header("👤 用戶登入")
@@ -192,16 +199,9 @@ with st.sidebar:
         st.success("✅ 已登入")
         st.divider()
         st.subheader("⚙️ 系統設定")
-        # 新增：調整低庫存門檻
         st.session_state["low_stock_limit"] = st.slider(
-            "🔴 低庫存警告門檻", 
-            min_value=1, 
-            max_value=100, 
-            value=st.session_state["low_stock_limit"],
-            help="當商品數量低於此數值時，會在首頁顯示警告。"
+            "🔴 低庫存警告門檻", 1, 100, st.session_state["low_stock_limit"]
         )
-        st.write(f"目前設定：低於 **{st.session_state['low_stock_limit']}** 個視為缺貨")
-        
         st.divider()
         if st.button("登出"): logout()
 
@@ -218,8 +218,6 @@ with tab1:
         total_items = len(df)
         total_qty = df['數量'].astype(int).sum()
         total_value = (df['數量'].astype(int) * df['單價'].astype(int)).sum()
-        
-        # 使用設定好的門檻
         limit = st.session_state["low_stock_limit"]
         low_stock_df = df[df['數量'].astype(int) < limit]
         
@@ -229,7 +227,7 @@ with tab1:
         m3.metric(f"⚠️ 缺貨 (<{limit})", f"{len(low_stock_df)} 款", delta_color="inverse")
         if not low_stock_df.empty:
             with st.expander(f"🚨 查看 {len(low_stock_df)} 款缺貨商品"):
-                st.dataframe(low_stock_df[['商品名稱', '數量', '分類']], hide_index=True)
+                st.dataframe(low_stock_df[['商品名稱', '數量', '分類', '廠商']], hide_index=True)
         
         st.divider()
 
@@ -241,7 +239,7 @@ with tab1:
             selected_cat = st.selectbox("📂 選擇分類篩選", all_cats, index=default_index)
             
         with c_search:
-            search_query = st.text_input("🔍 關鍵字搜尋", placeholder="商品名稱...")
+            search_query = st.text_input("🔍 關鍵字搜尋", placeholder="名稱、分類或廠商...")
             
         with c_refresh:
             st.write(""); st.write("")
@@ -251,7 +249,8 @@ with tab1:
         if selected_cat != "全部":
             df_display = df_display[df_display['分類'] == selected_cat]
         if search_query:
-            mask = df_display['商品名稱'].str.contains(search_query, case=False)
+            mask = df_display['商品名稱'].str.contains(search_query, case=False) | \
+                   df_display['廠商'].str.contains(search_query, case=False)
             df_display = df_display[mask]
 
         if not df_display.empty:
@@ -265,11 +264,12 @@ with tab1:
                 column_config={
                     "商品名稱": st.column_config.TextColumn("商品名稱"),
                     "分類": st.column_config.TextColumn("分類", width="small"),
+                    "廠商": st.column_config.TextColumn("廠商", width="medium"), # 新增廠商顯示
                     "主圖": st.column_config.ImageColumn("圖片", width="small"),
                     "單價": st.column_config.NumberColumn(format="$%d"),
                     "備註": st.column_config.TextColumn("備註", width="medium"),
                 },
-                column_order=["分類", "商品名稱", "主圖", "數量", "單價"],
+                column_order=["分類", "商品名稱", "廠商", "主圖", "數量", "單價"],
                 use_container_width=True,
                 hide_index=True
             )
@@ -281,8 +281,10 @@ with tab1:
                 unique_products = df_display['商品名稱'].unique().tolist()
                 sel_prod = st.selectbox("查看詳情", unique_products, key="t1_sel")
                 p_data = df[df['商品名稱'] == sel_prod].iloc[-1]
+                
                 st.info(f"""
                 **分類**: {p_data['分類']}
+                **廠商**: {p_data['廠商']}
                 **庫存**: {p_data['數量']}
                 **單價**: ${p_data['單價']}
                 """)
@@ -307,16 +309,20 @@ with tab2:
     if "未分類" not in existing_cats: existing_cats.append("未分類")
 
     with st.form("add_form"):
-        st.write("📂 **商品分類**")
+        st.write("📂 **分類設定**")
         cat_mode = st.radio("選擇方式", ["選擇現有分類", "輸入新分類"], horizontal=True, label_visibility="collapsed")
         p_cat = "未分類"
         if cat_mode == "選擇現有分類":
             p_cat = st.selectbox("選擇分類", existing_cats)
         else:
-            p_cat = st.text_input("輸入新分類名稱", placeholder="例如：鞋子、飾品...")
+            p_cat = st.text_input("輸入新分類名稱")
 
         st.write("📦 **基本資料**")
         p_name = st.text_input("商品名稱 (ID)")
+        
+        # 新增廠商輸入
+        p_supp = st.text_input("🏭 廠商名稱 (選填)", placeholder="例如：大盤商A、供應商B...")
+        
         c1, c2 = st.columns(2)
         p_qty = c1.number_input("數量", 1, value=10)
         p_price = c2.number_input("單價", 0, value=100)
@@ -338,7 +344,7 @@ with tab2:
                             if u: urls.append(u)
                 
                 with st.spinner("寫入中..."):
-                    add_product(p_name, p_qty, p_price, urls, p_remarks, p_cat)
+                    add_product(p_name, p_qty, p_price, urls, p_remarks, p_cat, p_supp)
             else:
                 st.warning("請輸入名稱")
 
@@ -350,11 +356,10 @@ with tab3:
     
     if not df.empty:
         all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
-        filter_cat = st.selectbox("先選擇分類 (可加速尋找)", all_cats, key="sell_filter")
+        filter_cat = st.selectbox("篩選分類", all_cats, key="sell_filter")
         
         if filter_cat != "全部": filtered_df = df[df['分類'] == filter_cat]
         else: filtered_df = df
-            
         prod_list = filtered_df['商品名稱'].unique().tolist()
         
         if prod_list:
@@ -364,7 +369,7 @@ with tab3:
                 if st.form_submit_button("確認銷貨", type="primary"):
                     sell_product(s_name, s_qty)
         else:
-            st.warning("此分類下無商品")
+            st.warning("無商品")
     else:
         st.warning("無庫存")
 
@@ -424,9 +429,13 @@ with tab5:
             
             st.divider()
             with st.form("edit_form"):
-                st.write("📂 **分類設定**")
+                st.write("📂 **分類與廠商**")
+                c_a, c_b = st.columns(2)
                 curr_cat = str(curr.get('分類', '未分類'))
-                n_cat = st.text_input("分類名稱", value=curr_cat)
+                curr_supp = str(curr.get('廠商', ''))
+                
+                n_cat = c_a.text_input("分類名稱", value=curr_cat)
+                n_supp = c_b.text_input("廠商名稱", value=curr_supp)
                 
                 st.write("📦 **基本資料**")
                 c1, c2 = st.columns(2)
@@ -438,7 +447,7 @@ with tab5:
                 raw_urls = str(curr.get('圖片連結','')).strip()
                 if raw_urls:
                     st.image([u.strip() for u in raw_urls.split(',') if u.strip()], width=100)
-                n_url_str = st.text_area("圖片連結 (逗號分隔)", value=raw_urls)
+                n_url_str = st.text_area("圖片連結", value=raw_urls)
                 n_files = st.file_uploader("新增圖片", type=['png','jpg'], accept_multiple_files=True)
                 
                 if st.form_submit_button("儲存變更", type="primary"):
@@ -454,7 +463,7 @@ with tab5:
                             else: final_str = ",".join(new_urls)
                     
                     with st.spinner("更新中..."):
-                        update_product_info(edit_name, n_qty, n_price, final_str, n_rem, n_cat)
+                        update_product_info(edit_name, n_qty, n_price, final_str, n_rem, n_cat, n_supp)
                         st.rerun()
     else:
         st.info("無資料")
