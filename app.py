@@ -7,7 +7,7 @@ import base64
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
-IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b"  
+IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b" 
 
 # --- 連線設定 ---
 @st.cache_resource(ttl=600)
@@ -25,36 +25,23 @@ def get_gspread_client():
 def get_worksheet(sheet_name="sheet1"):
     client = get_gspread_client()
     if not client: return None
-    
     try:
-        # 嘗試開啟指定分頁
         if sheet_name == "sheet1":
             return client.open(SPREADSHEET_NAME).sheet1
         else:
             return client.open(SPREADSHEET_NAME).worksheet(sheet_name)
-            
     except gspread.exceptions.WorksheetNotFound:
-        # ⚠️ 關鍵修正：如果找不到 vendors 分頁，自動建立！
         if sheet_name == "vendors":
             try:
                 sh = client.open(SPREADSHEET_NAME)
-                # 建立新分頁
                 new_ws = sh.add_worksheet(title="vendors", rows="100", cols="10")
-                # 寫入標題列
                 new_ws.append_row(["廠商名稱", "聯絡人", "電話", "地址", "備註"])
                 st.toast("已自動建立 'vendors' 分頁！")
                 return new_ws
-            except Exception as e:
-                st.error(f"建立分頁失敗: {e}")
-                return None
+            except: return None
         return None
-        
-    except gspread.exceptions.SpreadsheetNotFound:
-        st.error(f"❌ 找不到試算表 '{SPREADSHEET_NAME}'")
-        return None
-    except Exception as e:
+    except Exception:
         st.cache_resource.clear()
-        st.warning("⚠️ 連線忙碌中，請重整頁面...")
         return None
 
 # --- ImgBB 上傳 ---
@@ -98,7 +85,7 @@ def show_login_block():
     st.info("請使用左側欄位輸入密碼登入。")
     st.stop()
 
-# --- 核心功能：商品管理 ---
+# --- 核心功能 ---
 
 def get_inventory_df():
     sheet = get_worksheet("sheet1")
@@ -126,9 +113,31 @@ def find_product_cell(sheet, name):
             last_index = all_indices[-1]
             return sheet.cell(last_index + 1, 1)
         return None
+    except: return None
+
+# --- 🔥 新增：自動同步廠商功能 ---
+def sync_vendor_if_new(vendor_name):
+    """如果廠商名稱不在名錄中，自動新增"""
+    if not vendor_name: return
+    v_name = str(vendor_name).strip()
+    if not v_name: return
+
+    try:
+        ws = get_worksheet("vendors")
+        if not ws: return
+        
+        # 讀取現有名單
+        existing_vendors = ws.col_values(1)
+        
+        # 如果不在名單內，就加進去
+        if v_name not in existing_vendors:
+            ws.append_row([v_name, "", "", "", "由系統自動同步新增"])
+            st.toast(f"✅ 已將 '{v_name}' 自動加入廠商通訊錄！")
+            
     except Exception as e:
-        st.error(f"搜尋錯誤: {e}")
-        return None
+        print(f"同步廠商失敗: {e}")
+
+# --- 主要功能函式 (已加入同步邏輯) ---
 
 def add_product(name, quantity, price, image_urls, remarks, category, supplier):
     sheet = get_worksheet("sheet1")
@@ -138,6 +147,9 @@ def add_product(name, quantity, price, image_urls, remarks, category, supplier):
     if not cat_str: cat_str = "未分類"
     supp_str = str(supplier).strip()
     
+    # 🔥 1. 自動同步廠商
+    sync_vendor_if_new(supp_str)
+    
     if isinstance(image_urls, list):
         final_url_str = ",".join(image_urls)
     else:
@@ -146,6 +158,7 @@ def add_product(name, quantity, price, image_urls, remarks, category, supplier):
     if len(final_url_str) > 4000: st.error("❌ 網址太長"); return
 
     cell = find_product_cell(sheet, name_str)
+    
     if cell:
         sheet.update_cell(cell.row, 2, int(sheet.cell(cell.row, 2).value) + quantity)
         sheet.update_cell(cell.row, 3, price)
@@ -188,6 +201,10 @@ def update_product_info(name, new_qty, new_price, new_url_str, new_remarks, new_
     if not sheet: return
     clean_url_str = str(new_url_str).strip()
     if len(clean_url_str) > 4000: st.error("❌ 連結太長"); return
+    
+    # 🔥 2. 自動同步廠商 (編輯時也觸發)
+    sync_vendor_if_new(new_supp)
+    
     cell = find_product_cell(sheet, name)
     if cell:
         sheet.update_cell(cell.row, 2, new_qty)
@@ -200,53 +217,35 @@ def update_product_info(name, new_qty, new_price, new_url_str, new_remarks, new_
     else:
         st.error(f"❌ 找不到商品")
 
-# --- 核心功能：廠商管理 (修正版) ---
-
+# --- 廠商管理 ---
 def get_vendors_df():
     sheet = get_worksheet("vendors")
-    if sheet:
-        # 取得所有紀錄
-        data = sheet.get_all_records()
-        return pd.DataFrame(data)
+    if sheet: return pd.DataFrame(sheet.get_all_records())
     return pd.DataFrame()
 
 def add_vendor(name, contact, phone, address, remarks):
     sheet = get_worksheet("vendors")
     if not sheet: return
-    
     name_str = str(name).strip()
-    
     try:
-        # ⚠️ 改用 col_values 來檢查，比較穩定
-        existing_names = sheet.col_values(1) # 第一欄是廠商名稱
-        
-        # 檢查是否重複 (排除標題列)
-        if name_str in existing_names:
-            st.warning(f"⚠️ 廠商 '{name_str}' 已存在！")
+        existing = sheet.col_values(1)
+        if name_str in existing:
+            st.warning(f"⚠️ 廠商 '{name_str}' 已存在")
             return
-
-        # 新增
         sheet.append_row([name_str, contact, phone, address, remarks])
-        st.success(f"🏭 已成功新增廠商：'{name_str}'")
-        
-    except Exception as e:
-        st.error(f"新增失敗: {e}")
+        st.success(f"🏭 已新增廠商")
+    except: st.error("新增失敗")
 
 def delete_vendor(name):
     sheet = get_worksheet("vendors")
     if not sheet: return
-    
     target = str(name).strip()
     try:
-        col_values = sheet.col_values(1)
-        if target in col_values:
-            idx = col_values.index(target) + 1
-            sheet.delete_rows(idx)
-            st.success(f"🗑️ 已刪除廠商 '{target}'")
-        else:
-            st.error("❌ 找不到該廠商")
-    except Exception as e:
-        st.error(f"刪除失敗: {e}")
+        vals = sheet.col_values(1)
+        if target in vals:
+            sheet.delete_rows(vals.index(target)+1)
+            st.success("已刪除")
+    except: st.error("刪除失敗")
 
 # --- 介面設計 ---
 st.set_page_config(page_title="雲端進銷存", layout="wide")
@@ -363,7 +362,7 @@ with tab1:
     else:
         st.info("尚無資料")
 
-# Tab 2: 進貨 (完全修正版)
+# Tab 2: 進貨
 with tab2:
     st.header("商品進貨")
     if not st.session_state["is_admin"]: show_login_block()
@@ -376,7 +375,6 @@ with tab2:
     existing_vendors = sorted(vendors_df['廠商名稱'].unique().tolist()) if not vendors_df.empty else []
 
     with st.form("add_form"):
-        # 1. 分類設定 (並行)
         st.write("📂 **分類設定**")
         c_cat1, c_cat2 = st.columns([1, 1])
         with c_cat1:
@@ -384,14 +382,11 @@ with tab2:
         with c_cat2:
             new_cat = st.text_input("或輸入新分類", placeholder="填寫此欄優先使用")
 
-        # 2. 基本資料
         st.write("📦 **基本資料**")
         p_name = st.text_input("商品名稱 (ID) - 必填")
         
-        # 3. 廠商設定 (並行)
         st.write("🏭 **廠商設定**")
         vendor_options = ["(無 / 輸入新廠商)"] + existing_vendors
-        
         c_v1, c_v2 = st.columns([1, 1])
         with c_v1:
             sel_vendor = st.selectbox("選擇現有廠商", vendor_options)
@@ -403,22 +398,18 @@ with tab2:
         p_price = c2.number_input("單價", 0, value=100)
         p_remarks = st.text_area("備註")
         
-        # 4. 圖片設定
         st.write("📸 **圖片**")
         p_files = st.file_uploader("上傳 (可多選)", type=['png','jpg','jpeg'], accept_multiple_files=True)
         p_url = st.text_input("或貼上連結 (逗號隔開)")
 
         if st.form_submit_button("確認進貨", type="primary"):
             if p_name:
-                # 邏輯判斷
                 final_cat = new_cat if new_cat.strip() else sel_cat
                 if not final_cat.strip(): final_cat = "未分類"
                 
                 final_supp = ""
-                if new_vendor.strip():
-                    final_supp = new_vendor.strip()
-                elif sel_vendor != "(無 / 輸入新廠商)":
-                    final_supp = sel_vendor
+                if new_vendor.strip(): final_supp = new_vendor.strip()
+                elif sel_vendor != "(無 / 輸入新廠商)": final_supp = sel_vendor
 
                 urls = []
                 if p_url: urls.extend([u.strip() for u in p_url.split(',') if u.strip()])
@@ -441,7 +432,7 @@ with tab3:
     
     if not df.empty:
         all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
-        filter_cat = st.selectbox("篩選分類", all_cats, key="sell_filter")
+        filter_cat = st.selectbox("先選擇分類 (可加速尋找)", all_cats, key="sell_filter")
         
         if filter_cat != "全部": filtered_df = df[df['分類'] == filter_cat]
         else: filtered_df = df
@@ -454,7 +445,7 @@ with tab3:
                 if st.form_submit_button("確認銷貨", type="primary"):
                     sell_product(s_name, s_qty)
         else:
-            st.warning("無商品")
+            st.warning("此分類下無商品")
     else:
         st.warning("無庫存")
 
@@ -553,29 +544,19 @@ with tab5:
     else:
         st.info("無資料")
 
-# Tab 6: 廠商名錄 (修正重整問題)
+# Tab 6: 廠商名錄
 with tab6:
     st.header("🏭 廠商通訊錄")
     if not st.session_state["is_admin"]: show_login_block()
     
-    # 顯示廠商列表
     v_df = get_vendors_df()
     if not v_df.empty:
-        st.dataframe(
-            v_df,
-            use_container_width=True,
-            column_config={
-                "廠商名稱": st.column_config.TextColumn("廠商名稱", width="medium"),
-                "電話": st.column_config.TextColumn("電話", width="small"),
-            }
-        )
+        st.dataframe(v_df, use_container_width=True)
     else:
         st.info("目前無廠商資料。")
     
     st.divider()
-    
     c_add, c_del = st.columns(2)
-    
     with c_add:
         st.subheader("➕ 新增廠商")
         with st.form("add_vendor_form"):
@@ -588,7 +569,6 @@ with tab6:
             if st.form_submit_button("新增", type="primary"):
                 if v_name:
                     add_vendor(v_name, v_contact, v_phone, v_addr, v_rem)
-                    # ⚠️ 關鍵修正：加入重整指令，確保資料立刻出現
                     st.rerun()
                 else:
                     st.warning("請輸入名稱")
