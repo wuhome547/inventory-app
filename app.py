@@ -115,9 +115,8 @@ def find_product_cell(sheet, name):
         return None
     except: return None
 
-# --- 🔥 新增：自動同步廠商功能 ---
+# --- 自動同步廠商 ---
 def sync_vendor_if_new(vendor_name):
-    """如果廠商名稱不在名錄中，自動新增"""
     if not vendor_name: return
     v_name = str(vendor_name).strip()
     if not v_name: return
@@ -125,19 +124,13 @@ def sync_vendor_if_new(vendor_name):
     try:
         ws = get_worksheet("vendors")
         if not ws: return
-        
-        # 讀取現有名單
         existing_vendors = ws.col_values(1)
-        
-        # 如果不在名單內，就加進去
         if v_name not in existing_vendors:
             ws.append_row([v_name, "", "", "", "由系統自動同步新增"])
             st.toast(f"✅ 已將 '{v_name}' 自動加入廠商通訊錄！")
-            
-    except Exception as e:
-        print(f"同步廠商失敗: {e}")
+    except: pass
 
-# --- 主要功能函式 (已加入同步邏輯) ---
+# --- 主要功能 ---
 
 def add_product(name, quantity, price, image_urls, remarks, category, supplier):
     sheet = get_worksheet("sheet1")
@@ -147,8 +140,7 @@ def add_product(name, quantity, price, image_urls, remarks, category, supplier):
     if not cat_str: cat_str = "未分類"
     supp_str = str(supplier).strip()
     
-    # 🔥 1. 自動同步廠商
-    sync_vendor_if_new(supp_str)
+    sync_vendor_if_new(supp_str) # 同步
     
     if isinstance(image_urls, list):
         final_url_str = ",".join(image_urls)
@@ -202,8 +194,7 @@ def update_product_info(name, new_qty, new_price, new_url_str, new_remarks, new_
     clean_url_str = str(new_url_str).strip()
     if len(clean_url_str) > 4000: st.error("❌ 連結太長"); return
     
-    # 🔥 2. 自動同步廠商 (編輯時也觸發)
-    sync_vendor_if_new(new_supp)
+    sync_vendor_if_new(new_supp) # 同步
     
     cell = find_product_cell(sheet, name)
     if cell:
@@ -227,14 +218,11 @@ def add_vendor(name, contact, phone, address, remarks):
     sheet = get_worksheet("vendors")
     if not sheet: return
     name_str = str(name).strip()
-    
     try:
-        # 後端只負責寫入
         sheet.append_row([name_str, contact, phone, address, remarks])
         st.success(f"🏭 已成功新增廠商：'{name_str}'")
     except Exception as e:
         st.error(f"新增失敗: {e}")
-
 
 def delete_vendor(name):
     sheet = get_worksheet("vendors")
@@ -544,20 +532,29 @@ with tab5:
     else:
         st.info("無資料")
 
-# Tab 6: 廠商名錄
+# Tab 6: 廠商名錄 (修正警告問題)
 with tab6:
     st.header("🏭 廠商通訊錄")
     if not st.session_state["is_admin"]: show_login_block()
     
     v_df = get_vendors_df()
     if not v_df.empty:
-        st.dataframe(v_df, use_container_width=True)
+        st.dataframe(
+            v_df,
+            use_container_width=True,
+            column_config={
+                "廠商名稱": st.column_config.TextColumn("廠商名稱", width="medium"),
+                "電話": st.column_config.TextColumn("電話", width="small"),
+            }
+        )
     else:
         st.info("目前無廠商資料。")
     
     st.divider()
+    
     c_add, c_del = st.columns(2)
-      with c_add:
+    
+    with c_add:
         st.subheader("➕ 新增廠商")
         with st.form("add_vendor_form"):
             v_name = st.text_input("廠商名稱 (必填)")
@@ -566,24 +563,18 @@ with tab6:
             v_addr = st.text_input("地址")
             v_rem = st.text_area("備註")
             
-            # 使用 callback 機制或直接檢查
             submitted = st.form_submit_button("新增", type="primary")
-            
             if submitted:
                 if v_name:
-                    # 先在前端做簡單檢查，避免後端重整刷掉訊息
+                    # 先檢查前端重複，避免重整
                     current_vendors = v_df['廠商名稱'].astype(str).tolist() if not v_df.empty else []
-                    
                     if v_name in current_vendors:
                         st.error(f"❌ 廠商 '{v_name}' 已存在！")
-                        # 這裡不執行 rerun，讓錯誤訊息停留在畫面上
                     else:
                         add_vendor(v_name, v_contact, v_phone, v_addr, v_rem)
                         st.rerun()
                 else:
                     st.warning("請輸入名稱")
-
-
 
     with c_del:
         st.subheader("❌ 刪除廠商")
