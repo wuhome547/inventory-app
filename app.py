@@ -557,7 +557,7 @@ with tab6:
     
     st.divider()
     c_add, c_del = st.columns(2)
-        with c_add:
+            with c_add:
         st.subheader("➕ 新增廠商")
         with st.form("add_vendor_form"):
             v_name = st.text_input("廠商名稱 (必填)")
@@ -582,6 +582,7 @@ with tab6:
                         st.rerun()
                 else:
                     st.warning("請輸入名稱")
+
 
 
     with c_del:
