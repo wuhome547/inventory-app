@@ -7,7 +7,7 @@ import base64
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
-IMGBB_API_KEY = "請將您的 ImgBB API Key 貼在這裡" 
+IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b"  
 
 # --- 連線設定 ---
 @st.cache_resource(ttl=600)
@@ -363,37 +363,44 @@ with tab1:
     else:
         st.info("尚無資料")
 
-# Tab 2: 進貨
+# Tab 2: 進貨 (修正分類輸入問題)
 with tab2:
     st.header("商品進貨")
     if not st.session_state["is_admin"]: show_login_block()
 
     df = get_inventory_df()
+    # 準備分類清單
     existing_cats = sorted(df['分類'].unique().tolist()) if not df.empty else []
-    if "未分類" not in existing_cats: existing_cats.append("未分類")
+    if "未分類" not in existing_cats: existing_cats.insert(0, "未分類") # 確保未分類在第一個
     
+    # 準備廠商清單
     vendors_df = get_vendors_df()
     existing_vendors = sorted(vendors_df['廠商名稱'].unique().tolist()) if not vendors_df.empty else []
 
     with st.form("add_form"):
+        # --- 1. 分類設定 (改為並行顯示) ---
         st.write("📂 **分類設定**")
-        cat_mode = st.radio("選擇方式", ["選擇現有分類", "輸入新分類"], horizontal=True, label_visibility="collapsed")
-        p_cat = "未分類"
-        if cat_mode == "選擇現有分類":
-            p_cat = st.selectbox("選擇分類", existing_cats)
-        else:
-            p_cat = st.text_input("輸入新分類名稱")
+        c_cat1, c_cat2 = st.columns([1, 1])
+        with c_cat1:
+            # 下拉選單
+            sel_cat = st.selectbox("選擇現有分類", existing_cats)
+        with c_cat2:
+            # 輸入框
+            new_cat = st.text_input("或輸入新分類", placeholder="若填寫此欄，將優先使用")
 
+        # --- 2. 基本資料 ---
         st.write("📦 **基本資料**")
-        p_name = st.text_input("商品名稱 (ID)")
+        p_name = st.text_input("商品名稱 (ID) - 必填")
         
+        # 廠商設定
         st.write("🏭 **廠商設定**")
         if existing_vendors:
             c_v1, c_v2 = st.columns([1, 1])
             with c_v1:
                 sel_vendor = st.selectbox("選擇現有廠商", ["(輸入新廠商)"] + existing_vendors)
             with c_v2:
-                new_vendor = st.text_input("或輸入新廠商名稱", disabled=(sel_vendor != "(輸入新廠商)"))
+                # 這裡為了方便，我們直接讓輸入框總是可用，邏輯同分類
+                new_vendor = st.text_input("或輸入新廠商", disabled=(sel_vendor != "(輸入新廠商)"))
             
             p_supp = new_vendor if sel_vendor == "(輸入新廠商)" else sel_vendor
         else:
@@ -404,13 +411,22 @@ with tab2:
         p_price = c2.number_input("單價", 0, value=100)
         p_remarks = st.text_area("備註")
         
+        # --- 3. 圖片設定 ---
         st.write("📸 **圖片**")
-        p_files = st.file_uploader("上傳", type=['png','jpg'], accept_multiple_files=True)
-        p_url = st.text_input("或貼上連結")
+        p_files = st.file_uploader("上傳 (可多選)", type=['png','jpg','jpeg'], accept_multiple_files=True)
+        p_url = st.text_input("或貼上連結 (逗號隔開)")
 
+        # --- 送出按鈕 ---
         if st.form_submit_button("確認進貨", type="primary"):
             if p_name:
-                if not p_cat.strip(): p_cat = "未分類"
+                # 決定最終分類：如果有填寫新分類，就用新的；否則用選的
+                final_cat = new_cat if new_cat.strip() else sel_cat
+                if not final_cat.strip(): final_cat = "未分類"
+
+                # 決定最終廠商
+                # (上面的邏輯已經處理好了 p_supp)
+
+                # 處理圖片
                 urls = []
                 if p_url: urls.extend([u.strip() for u in p_url.split(',') if u.strip()])
                 if p_files:
@@ -419,11 +435,10 @@ with tab2:
                             u = upload_image_to_imgbb(f)
                             if u: urls.append(u)
                 
-                with st.spinner("寫入中..."):
-                    add_product(p_name, p_qty, p_price, urls, p_remarks, p_cat, p_supp)
+                with st.spinner("寫入資料庫..."):
+                    add_product(p_name, p_qty, p_price, urls, p_remarks, final_cat, p_supp)
             else:
-                st.warning("請輸入名稱")
-
+                st.warning("請輸入商品名稱")
 # Tab 3: 銷貨
 with tab3:
     st.header("商品銷貨")
