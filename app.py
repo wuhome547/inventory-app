@@ -7,7 +7,7 @@ import base64
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
-IMGBB_API_KEY = "請將您的 ImgBB API Key 貼在這裡" 
+IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b" 
 
 # --- 連線設定 ---
 @st.cache_resource(ttl=600)
@@ -83,7 +83,7 @@ def logout():
 def show_login_block():
     st.warning("🔒 **此功能僅限管理員使用**")
     st.info("請使用左側欄位輸入密碼登入。")
-    st.stop()
+    st.stop() # 這行非常重要，會停止執行後面的程式碼
 
 # --- 核心功能 ---
 
@@ -279,7 +279,7 @@ st.title("☁️ 視覺化進銷存系統")
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨 (限)", "➖ 銷貨 (限)", "❌ 刪除 (限)", "✏️ 編輯 (限)", "🏭 廠商名錄 (限)"])
 
-# Tab 1: 庫存圖牆
+# Tab 1: 庫存圖牆 (只有這個不需要登入)
 with tab1:
     st.header("庫存總覽")
     df = get_inventory_df()
@@ -369,7 +369,7 @@ with tab1:
     else:
         st.info("尚無資料")
 
-# Tab 2: 進貨
+# Tab 2: 進貨 (⚠️ 已加上權限檢查)
 with tab2:
     st.header("商品進貨")
     if not st.session_state["is_admin"]: show_login_block()
@@ -431,10 +431,11 @@ with tab2:
             else:
                 st.warning("請輸入名稱")
 
-# Tab 3: 銷貨
+# Tab 3: 銷貨 (⚠️ 已加上權限檢查)
 with tab3:
     st.header("商品銷貨")
     if not st.session_state["is_admin"]: show_login_block()
+    
     df = get_inventory_df()
     
     if not df.empty:
@@ -456,10 +457,11 @@ with tab3:
     else:
         st.warning("無庫存")
 
-# Tab 4: 刪除
+# Tab 4: 刪除 (⚠️ 已加上權限檢查)
 with tab4:
     st.header("刪除商品")
     if not st.session_state["is_admin"]: show_login_block()
+    
     df = get_inventory_df()
     
     if not df.empty:
@@ -493,10 +495,11 @@ with tab4:
                     st.session_state["del_mode"] = False
                     st.rerun()
 
-# Tab 5: 編輯
+# Tab 5: 編輯 (⚠️ 已加上權限檢查)
 with tab5:
     st.header("✏️ 編輯資料")
     if not st.session_state["is_admin"]: show_login_block()
+    
     df = get_inventory_df()
     
     if not df.empty:
@@ -551,7 +554,7 @@ with tab5:
     else:
         st.info("無資料")
 
-# Tab 6: 廠商名錄
+# Tab 6: 廠商名錄 (⚠️ 已加上權限檢查)
 with tab6:
     st.header("🏭 廠商通訊錄")
     if not st.session_state["is_admin"]: show_login_block()
@@ -623,7 +626,4 @@ with tab6:
         if not v_df.empty:
             del_v_name = st.selectbox("選擇刪除對象", v_df['廠商名稱'].unique(), key="del_v_sel")
             if st.button("確認刪除", type="primary", key="del_v_btn"):
-                delete_vendor(del_v_name)
-                st.rerun()
-        else:
-            st.info("無廠商可刪除")
+                delete_vendor(
