@@ -7,7 +7,7 @@ import base64
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
-IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b" 
+IMGBB_API_KEY = "請將您的 ImgBB API Key 貼在這裡" 
 
 # --- 連線設定 ---
 @st.cache_resource(ttl=600)
@@ -626,4 +626,7 @@ with tab6:
         if not v_df.empty:
             del_v_name = st.selectbox("選擇刪除對象", v_df['廠商名稱'].unique(), key="del_v_sel")
             if st.button("確認刪除", type="primary", key="del_v_btn"):
-                delete_vendor(
+                delete_vendor(del_v_name)
+                st.rerun()
+        else:
+            st.info("無廠商可刪除")
