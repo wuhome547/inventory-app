@@ -1,3 +1,16 @@
+沒問題！權限控管必須全面才安全。
+
+之前可能漏加了 if not is_admin: show_login_block() 這一段在部分分頁。
+現在我已經將這個「鎖定機制」補上，並確保所有修改頁面（Tab 2, 3, 4, 5, 6）在未登入狀態下，都會統一顯示：
+
+🔒 此功能僅限管理員使用
+請使用左側欄位輸入密碼登入。
+
+Tab 1 (庫存總覽) 則保持開放，讓訪客可以瀏覽但不能修改。
+
+請全選複製並覆蓋 app.py：
+
+python
 import streamlit as st
 import pandas as pd
 import gspread
@@ -7,7 +20,7 @@ import base64
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
-IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b" 
+IMGBB_API_KEY = "請將您的 ImgBB API Key 貼在這裡" 
 
 # --- 連線設定 ---
 @st.cache_resource(ttl=600)
