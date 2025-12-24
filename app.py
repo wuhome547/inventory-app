@@ -235,26 +235,19 @@ def delete_vendor(name):
             st.success("已刪除")
     except: st.error("刪除失敗")
 
-# 🔥 新增：編輯廠商函式
 def update_vendor(old_name, new_contact, new_phone, new_addr, new_rem):
     sheet = get_worksheet("vendors")
     if not sheet: return
-    
     target = str(old_name).strip()
     try:
-        # 尋找廠商所在的列
         vals = sheet.col_values(1)
         if target in vals:
-            # 取得 row index (從 1 開始)
             row_idx = vals.index(target) + 1
-            
-            # 更新各欄位 (2=聯絡人, 3=電話, 4=地址, 5=備註)
             sheet.update_cell(row_idx, 2, new_contact)
             sheet.update_cell(row_idx, 3, new_phone)
             sheet.update_cell(row_idx, 4, new_addr)
             sheet.update_cell(row_idx, 5, new_rem)
-            
-            st.success(f"✅ 廠商 '{target}' 資料已更新！")
+            st.success(f"✅ 廠商 '{target}' 更新成功")
         else:
             st.error("❌ 找不到該廠商")
     except Exception as e:
@@ -264,7 +257,8 @@ def update_vendor(old_name, new_contact, new_phone, new_addr, new_rem):
 st.set_page_config(page_title="雲端進銷存", layout="wide")
 
 if "is_admin" not in st.session_state: st.session_state["is_admin"] = False
-if "low_stock_limit" not in st.session_state: st.session_state["low_stock_limit"] = 5
+# ⚠️ 這裡已將預設值改為 1 (小於1才算缺貨)
+if "low_stock_limit" not in st.session_state: st.session_state["low_stock_limit"] = 1
 
 with st.sidebar:
     st.header("👤 用戶登入")
@@ -278,6 +272,7 @@ with st.sidebar:
         st.session_state["low_stock_limit"] = st.slider(
             "🔴 低庫存警告門檻", 1, 100, st.session_state["low_stock_limit"]
         )
+        st.caption("低於此數值將顯示紅色警告")
         st.divider()
         if st.button("登出"): logout()
 
@@ -557,7 +552,7 @@ with tab5:
     else:
         st.info("無資料")
 
-# Tab 6: 廠商名錄 (新增：編輯功能)
+# Tab 6: 廠商名錄
 with tab6:
     st.header("🏭 廠商通訊錄")
     if not st.session_state["is_admin"]: show_login_block()
@@ -581,7 +576,6 @@ with tab6:
     
     st.divider()
     
-    # 版面規劃：左(新增) | 中(編輯) | 右(刪除)
     t6_add, t6_edit, t6_del = st.tabs(["➕ 新增", "✏️ 編輯", "❌ 刪除"])
     
     with t6_add:
@@ -593,7 +587,8 @@ with tab6:
             v_addr = st.text_input("地址")
             v_rem = st.text_area("備註")
             
-            if st.form_submit_button("確認新增", type="primary"):
+            submitted = st.form_submit_button("確認新增", type="primary")
+            if submitted:
                 if v_name:
                     current_vendors = v_df['廠商名稱'].tolist() if not v_df.empty else []
                     if v_name in current_vendors:
@@ -608,14 +603,10 @@ with tab6:
         st.subheader("編輯廠商資料")
         if not v_df.empty:
             edit_v_name = st.selectbox("選擇編輯對象", v_df['廠商名稱'].unique(), key="edit_v_sel")
-            
-            # 取得該廠商資料
             v_data = v_df[v_df['廠商名稱'] == edit_v_name].iloc[0]
             
             with st.form("edit_vendor_form"):
-                # 廠商名稱通常不給改，避免關聯出錯 (若要改名建議刪除重建立)
                 st.info(f"正在編輯：**{edit_v_name}**")
-                
                 ev_contact = st.text_input("聯絡人", value=v_data.get('聯絡人', ''))
                 ev_phone = st.text_input("電話", value=v_data.get('電話', ''))
                 ev_addr = st.text_input("地址", value=v_data.get('地址', ''))
