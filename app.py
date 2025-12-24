@@ -7,7 +7,7 @@ import base64
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
-IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b"
+IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b" 
 
 # --- 連線設定 ---
 @st.cache_resource(ttl=600)
@@ -80,10 +80,10 @@ def logout():
     st.session_state["is_admin"] = False
     st.rerun()
 
+# 修正：只顯示警告，不停止整個程式，讓後面的 Tab 有機會執行
 def show_login_block():
     st.warning("🔒 **此功能僅限管理員使用**")
     st.info("請使用左側欄位輸入密碼登入。")
-    st.stop() # 這行非常重要，會停止執行後面的程式碼
 
 # --- 核心功能 ---
 
@@ -115,12 +115,10 @@ def find_product_cell(sheet, name):
         return None
     except: return None
 
-# --- 自動同步廠商 ---
 def sync_vendor_if_new(vendor_name):
     if not vendor_name: return
     v_name = str(vendor_name).strip()
     if not v_name: return
-
     try:
         ws = get_worksheet("vendors")
         if not ws: return
@@ -130,8 +128,6 @@ def sync_vendor_if_new(vendor_name):
             st.toast(f"✅ 已將 '{v_name}' 自動加入廠商通訊錄！")
     except: pass
 
-# --- 主要功能 ---
-
 def add_product(name, quantity, price, image_urls, remarks, category, supplier):
     sheet = get_worksheet("sheet1")
     if not sheet: return
@@ -139,18 +135,13 @@ def add_product(name, quantity, price, image_urls, remarks, category, supplier):
     cat_str = str(category).strip()
     if not cat_str: cat_str = "未分類"
     supp_str = str(supplier).strip()
-    
     sync_vendor_if_new(supp_str)
     
-    if isinstance(image_urls, list):
-        final_url_str = ",".join(image_urls)
-    else:
-        final_url_str = str(image_urls).strip()
-
+    if isinstance(image_urls, list): final_url_str = ",".join(image_urls)
+    else: final_url_str = str(image_urls).strip()
     if len(final_url_str) > 4000: st.error("❌ 網址太長"); return
 
     cell = find_product_cell(sheet, name_str)
-    
     if cell:
         sheet.update_cell(cell.row, 2, int(sheet.cell(cell.row, 2).value) + quantity)
         sheet.update_cell(cell.row, 3, price)
@@ -193,9 +184,7 @@ def update_product_info(name, new_qty, new_price, new_url_str, new_remarks, new_
     if not sheet: return
     clean_url_str = str(new_url_str).strip()
     if len(clean_url_str) > 4000: st.error("❌ 連結太長"); return
-    
     sync_vendor_if_new(new_supp)
-    
     cell = find_product_cell(sheet, name)
     if cell:
         sheet.update_cell(cell.row, 2, new_qty)
@@ -208,7 +197,6 @@ def update_product_info(name, new_qty, new_price, new_url_str, new_remarks, new_
     else:
         st.error(f"❌ 找不到商品")
 
-# --- 廠商管理 ---
 def get_vendors_df():
     sheet = get_worksheet("vendors")
     if sheet: return pd.DataFrame(sheet.get_all_records())
@@ -279,7 +267,7 @@ st.title("☁️ 視覺化進銷存系統")
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨 (限)", "➖ 銷貨 (限)", "❌ 刪除 (限)", "✏️ 編輯 (限)", "🏭 廠商名錄 (限)"])
 
-# Tab 1: 庫存圖牆 (只有這個不需要登入)
+# Tab 1: 庫存圖牆 (無須權限)
 with tab1:
     st.header("庫存總覽")
     df = get_inventory_df()
@@ -369,264 +357,265 @@ with tab1:
     else:
         st.info("尚無資料")
 
-# Tab 2: 進貨 (⚠️ 已加上權限檢查)
+# Tab 2: 進貨
 with tab2:
     st.header("商品進貨")
-    if not st.session_state["is_admin"]: show_login_block()
-
-    df = get_inventory_df()
-    existing_cats = sorted(df['分類'].unique().tolist()) if not df.empty else []
-    if "未分類" not in existing_cats: existing_cats.insert(0, "未分類")
-    
-    vendors_df = get_vendors_df()
-    existing_vendors = sorted(vendors_df['廠商名稱'].unique().tolist()) if not vendors_df.empty else []
-
-    with st.form("add_form"):
-        st.write("📂 **分類設定**")
-        c_cat1, c_cat2 = st.columns([1, 1])
-        with c_cat1:
-            sel_cat = st.selectbox("選擇現有分類", existing_cats)
-        with c_cat2:
-            new_cat = st.text_input("或輸入新分類", placeholder="填寫此欄優先使用")
-
-        st.write("📦 **基本資料**")
-        p_name = st.text_input("商品名稱 (ID) - 必填")
-        
-        st.write("🏭 **廠商設定**")
-        vendor_options = ["(無 / 輸入新廠商)"] + existing_vendors
-        c_v1, c_v2 = st.columns([1, 1])
-        with c_v1:
-            sel_vendor = st.selectbox("選擇現有廠商", vendor_options)
-        with c_v2:
-            new_vendor = st.text_input("或輸入新廠商", placeholder="填寫此欄優先使用")
-        
-        c1, c2 = st.columns(2)
-        p_qty = c1.number_input("數量", 1, value=10)
-        p_price = c2.number_input("單價", 0, value=100)
-        p_remarks = st.text_area("備註")
-        
-        st.write("📸 **圖片**")
-        p_files = st.file_uploader("上傳 (可多選)", type=['png','jpg','jpeg'], accept_multiple_files=True)
-        p_url = st.text_input("或貼上連結 (逗號隔開)")
-
-        if st.form_submit_button("確認進貨", type="primary"):
-            if p_name:
-                final_cat = new_cat if new_cat.strip() else sel_cat
-                if not final_cat.strip(): final_cat = "未分類"
-                
-                final_supp = ""
-                if new_vendor.strip(): final_supp = new_vendor.strip()
-                elif sel_vendor != "(無 / 輸入新廠商)": final_supp = sel_vendor
-
-                urls = []
-                if p_url: urls.extend([u.strip() for u in p_url.split(',') if u.strip()])
-                if p_files:
-                    with st.spinner("上傳中..."):
-                        for f in p_files:
-                            u = upload_image_to_imgbb(f)
-                            if u: urls.append(u)
-                
-                with st.spinner("寫入資料庫..."):
-                    add_product(p_name, p_qty, p_price, urls, p_remarks, final_cat, final_supp)
-            else:
-                st.warning("請輸入名稱")
-
-# Tab 3: 銷貨 (⚠️ 已加上權限檢查)
-with tab3:
-    st.header("商品銷貨")
-    if not st.session_state["is_admin"]: show_login_block()
-    
-    df = get_inventory_df()
-    
-    if not df.empty:
-        all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
-        filter_cat = st.selectbox("先選擇分類 (可加速尋找)", all_cats, key="sell_filter")
-        
-        if filter_cat != "全部": filtered_df = df[df['分類'] == filter_cat]
-        else: filtered_df = df
-        prod_list = filtered_df['商品名稱'].unique().tolist()
-        
-        if prod_list:
-            with st.form("sell_form"):
-                s_name = st.selectbox("選擇商品", prod_list)
-                s_qty = st.number_input("數量", 1)
-                if st.form_submit_button("確認銷貨", type="primary"):
-                    sell_product(s_name, s_qty)
-        else:
-            st.warning("此分類下無商品")
+    if not st.session_state["is_admin"]:
+        show_login_block()
     else:
-        st.warning("無庫存")
-
-# Tab 4: 刪除 (⚠️ 已加上權限檢查)
-with tab4:
-    st.header("刪除商品")
-    if not st.session_state["is_admin"]: show_login_block()
-    
-    df = get_inventory_df()
-    
-    if not df.empty:
-        if "del_mode" not in st.session_state: st.session_state["del_mode"] = False
-        all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
-        filter_cat = st.selectbox("篩選分類", all_cats, key="del_filter", disabled=st.session_state["del_mode"])
+        # ⚠️ 只有登入後才會顯示以下內容
+        df = get_inventory_df()
+        existing_cats = sorted(df['分類'].unique().tolist()) if not df.empty else []
+        if "未分類" not in existing_cats: existing_cats.insert(0, "未分類")
         
-        if filter_cat != "全部": filtered_df = df[df['分類'] == filter_cat]
-        else: filtered_df = df
-        prod_list = filtered_df['商品名稱'].unique().tolist()
+        vendors_df = get_vendors_df()
+        existing_vendors = sorted(vendors_df['廠商名稱'].unique().tolist()) if not vendors_df.empty else []
 
-        c1, c2 = st.columns([3, 1])
-        with c1:
-            d_name = st.selectbox("選擇商品", prod_list, disabled=st.session_state["del_mode"], key="del_sel")
-        with c2:
-            st.write(""); st.write("")
-            if st.button("🗑️ 刪除", type="primary", disabled=st.session_state["del_mode"]):
-                st.session_state["del_mode"] = True
-                st.session_state["del_target"] = d_name
-                st.rerun()
-        if st.session_state["del_mode"]:
-            st.warning(f"確認刪除 **{st.session_state['del_target']}**？")
-            k1, k2 = st.columns(2)
-            with k1:
-                if st.button("✅ 確認"):
-                    delete_product(st.session_state["del_target"])
-                    st.session_state["del_mode"] = False
-                    st.rerun()
-            with k2:
-                if st.button("❌ 取消"):
-                    st.session_state["del_mode"] = False
-                    st.rerun()
+        with st.form("add_form"):
+            st.write("📂 **分類設定**")
+            c_cat1, c_cat2 = st.columns([1, 1])
+            with c_cat1:
+                sel_cat = st.selectbox("選擇現有分類", existing_cats)
+            with c_cat2:
+                new_cat = st.text_input("或輸入新分類", placeholder="填寫此欄優先使用")
 
-# Tab 5: 編輯 (⚠️ 已加上權限檢查)
-with tab5:
-    st.header("✏️ 編輯資料")
-    if not st.session_state["is_admin"]: show_login_block()
-    
-    df = get_inventory_df()
-    
-    if not df.empty:
-        all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
-        filter_cat = st.selectbox("篩選分類", all_cats, key="edit_filter")
-        if filter_cat != "全部": filtered_df = df[df['分類'] == filter_cat]
-        else: filtered_df = df
-        prod_list = filtered_df['商品名稱'].unique().tolist()
-        
-        if prod_list:
-            edit_name = st.selectbox("選擇商品", prod_list, key="edit_sel")
-            curr = df[df['商品名稱'] == str(edit_name)].iloc[-1]
+            st.write("📦 **基本資料**")
+            p_name = st.text_input("商品名稱 (ID) - 必填")
             
-            st.divider()
-            with st.form("edit_form"):
-                st.write("📂 **分類與廠商**")
-                c_a, c_b = st.columns(2)
-                curr_cat = str(curr.get('分類', '未分類'))
-                curr_supp = str(curr.get('廠商', ''))
-                
-                n_cat = c_a.text_input("分類名稱", value=curr_cat)
-                n_supp = c_b.text_input("廠商名稱", value=curr_supp)
-                
-                st.write("📦 **基本資料**")
-                c1, c2 = st.columns(2)
-                n_qty = c1.number_input("庫存", 0, value=int(curr['數量']))
-                n_price = c2.number_input("單價", 0, value=int(curr['單價']))
-                n_rem = st.text_area("備註", value=str(curr.get('備註','')))
-                
-                st.write("📸 **圖片管理**")
-                raw_urls = str(curr.get('圖片連結','')).strip()
-                if raw_urls:
-                    st.image([u.strip() for u in raw_urls.split(',') if u.strip()], width=100)
-                n_url_str = st.text_area("圖片連結", value=raw_urls)
-                n_files = st.file_uploader("新增圖片", type=['png','jpg'], accept_multiple_files=True)
-                
-                if st.form_submit_button("儲存變更", type="primary"):
-                    final_str = n_url_str
-                    if n_files:
-                        new_urls = []
-                        with st.spinner("上傳中..."):
-                            for f in n_files:
-                                u = upload_image_to_imgbb(f)
-                                if u: new_urls.append(u)
-                        if new_urls:
-                            if final_str.strip(): final_str += "," + ",".join(new_urls)
-                            else: final_str = ",".join(new_urls)
+            st.write("🏭 **廠商設定**")
+            vendor_options = ["(無 / 輸入新廠商)"] + existing_vendors
+            c_v1, c_v2 = st.columns([1, 1])
+            with c_v1:
+                sel_vendor = st.selectbox("選擇現有廠商", vendor_options)
+            with c_v2:
+                new_vendor = st.text_input("或輸入新廠商", placeholder="填寫此欄優先使用")
+            
+            c1, c2 = st.columns(2)
+            p_qty = c1.number_input("數量", 1, value=10)
+            p_price = c2.number_input("單價", 0, value=100)
+            p_remarks = st.text_area("備註")
+            
+            st.write("📸 **圖片**")
+            p_files = st.file_uploader("上傳 (可多選)", type=['png','jpg','jpeg'], accept_multiple_files=True)
+            p_url = st.text_input("或貼上連結 (逗號隔開)")
+
+            if st.form_submit_button("確認進貨", type="primary"):
+                if p_name:
+                    final_cat = new_cat if new_cat.strip() else sel_cat
+                    if not final_cat.strip(): final_cat = "未分類"
                     
-                    with st.spinner("更新中..."):
-                        update_product_info(edit_name, n_qty, n_price, final_str, n_rem, n_cat, n_supp)
-                        st.rerun()
-    else:
-        st.info("無資料")
+                    final_supp = ""
+                    if new_vendor.strip(): final_supp = new_vendor.strip()
+                    elif sel_vendor != "(無 / 輸入新廠商)": final_supp = sel_vendor
 
-# Tab 6: 廠商名錄 (⚠️ 已加上權限檢查)
-with tab6:
-    st.header("🏭 廠商通訊錄")
-    if not st.session_state["is_admin"]: show_login_block()
-    
-    v_df = get_vendors_df()
-    if not v_df.empty:
-        # 強制轉型，確保顯示正常
-        for col in v_df.columns:
-            v_df[col] = v_df[col].astype(str)
-            
-        st.dataframe(
-            v_df,
-            use_container_width=True,
-            column_config={
-                "廠商名稱": st.column_config.TextColumn("廠商名稱", width="medium"),
-                "電話": st.column_config.TextColumn("電話", width="small"),
-            }
-        )
-    else:
-        st.info("目前無廠商資料。")
-    
-    st.divider()
-    
-    t6_add, t6_edit, t6_del = st.tabs(["➕ 新增", "✏️ 編輯", "❌ 刪除"])
-    
-    with t6_add:
-        st.subheader("新增廠商")
-        with st.form("add_vendor_form"):
-            v_name = st.text_input("廠商名稱 (必填)")
-            v_contact = st.text_input("聯絡人")
-            v_phone = st.text_input("電話")
-            v_addr = st.text_input("地址")
-            v_rem = st.text_area("備註")
-            
-            submitted = st.form_submit_button("確認新增", type="primary")
-            if submitted:
-                if v_name:
-                    current_vendors = v_df['廠商名稱'].tolist() if not v_df.empty else []
-                    if v_name in current_vendors:
-                        st.error(f"❌ 廠商 '{v_name}' 已存在！")
-                    else:
-                        add_vendor(v_name, v_contact, v_phone, v_addr, v_rem)
-                        st.rerun()
+                    urls = []
+                    if p_url: urls.extend([u.strip() for u in p_url.split(',') if u.strip()])
+                    if p_files:
+                        with st.spinner("上傳中..."):
+                            for f in p_files:
+                                u = upload_image_to_imgbb(f)
+                                if u: urls.append(u)
+                    
+                    with st.spinner("寫入資料庫..."):
+                        add_product(p_name, p_qty, p_price, urls, p_remarks, final_cat, final_supp)
                 else:
                     st.warning("請輸入名稱")
 
-    with t6_edit:
-        st.subheader("編輯廠商資料")
-        if not v_df.empty:
-            edit_v_name = st.selectbox("選擇編輯對象", v_df['廠商名稱'].unique(), key="edit_v_sel")
-            v_data = v_df[v_df['廠商名稱'] == edit_v_name].iloc[0]
+# Tab 3: 銷貨
+with tab3:
+    st.header("商品銷貨")
+    if not st.session_state["is_admin"]:
+        show_login_block()
+    else:
+        df = get_inventory_df()
+        if not df.empty:
+            all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
+            filter_cat = st.selectbox("先選擇分類 (可加速尋找)", all_cats, key="sell_filter")
             
-            with st.form("edit_vendor_form"):
-                st.info(f"正在編輯：**{edit_v_name}**")
-                ev_contact = st.text_input("聯絡人", value=v_data.get('聯絡人', ''))
-                ev_phone = st.text_input("電話", value=v_data.get('電話', ''))
-                ev_addr = st.text_input("地址", value=v_data.get('地址', ''))
-                ev_rem = st.text_area("備註", value=v_data.get('備註', ''))
-                
-                if st.form_submit_button("儲存修改", type="primary"):
-                    with st.spinner("更新中..."):
-                        update_vendor(edit_v_name, ev_contact, ev_phone, ev_addr, ev_rem)
-                        st.rerun()
+            if filter_cat != "全部": filtered_df = df[df['分類'] == filter_cat]
+            else: filtered_df = df
+            prod_list = filtered_df['商品名稱'].unique().tolist()
+            
+            if prod_list:
+                with st.form("sell_form"):
+                    s_name = st.selectbox("選擇商品", prod_list)
+                    s_qty = st.number_input("數量", 1)
+                    if st.form_submit_button("確認銷貨", type="primary"):
+                        sell_product(s_name, s_qty)
+            else:
+                st.warning("此分類下無商品")
         else:
-            st.info("無廠商可編輯")
+            st.warning("無庫存")
 
-    with t6_del:
-        st.subheader("刪除廠商")
-        if not v_df.empty:
-            del_v_name = st.selectbox("選擇刪除對象", v_df['廠商名稱'].unique(), key="del_v_sel")
-            if st.button("確認刪除", type="primary", key="del_v_btn"):
-                delete_vendor(del_v_name)
-                st.rerun()
+# Tab 4: 刪除
+with tab4:
+    st.header("刪除商品")
+    if not st.session_state["is_admin"]:
+        show_login_block()
+    else:
+        df = get_inventory_df()
+        if not df.empty:
+            if "del_mode" not in st.session_state: st.session_state["del_mode"] = False
+            all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
+            filter_cat = st.selectbox("篩選分類", all_cats, key="del_filter", disabled=st.session_state["del_mode"])
+            
+            if filter_cat != "全部": filtered_df = df[df['分類'] == filter_cat]
+            else: filtered_df = df
+            prod_list = filtered_df['商品名稱'].unique().tolist()
+
+            c1, c2 = st.columns([3, 1])
+            with c1:
+                d_name = st.selectbox("選擇商品", prod_list, disabled=st.session_state["del_mode"], key="del_sel")
+            with c2:
+                st.write(""); st.write("")
+                if st.button("🗑️ 刪除", type="primary", disabled=st.session_state["del_mode"]):
+                    st.session_state["del_mode"] = True
+                    st.session_state["del_target"] = d_name
+                    st.rerun()
+            if st.session_state["del_mode"]:
+                st.warning(f"確認刪除 **{st.session_state['del_target']}**？")
+                k1, k2 = st.columns(2)
+                with k1:
+                    if st.button("✅ 確認"):
+                        delete_product(st.session_state["del_target"])
+                        st.session_state["del_mode"] = False
+                        st.rerun()
+                with k2:
+                    if st.button("❌ 取消"):
+                        st.session_state["del_mode"] = False
+                        st.rerun()
+
+# Tab 5: 編輯
+with tab5:
+    st.header("✏️ 編輯資料")
+    if not st.session_state["is_admin"]:
+        show_login_block()
+    else:
+        df = get_inventory_df()
+        if not df.empty:
+            all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
+            filter_cat = st.selectbox("篩選分類", all_cats, key="edit_filter")
+            if filter_cat != "全部": filtered_df = df[df['分類'] == filter_cat]
+            else: filtered_df = df
+            prod_list = filtered_df['商品名稱'].unique().tolist()
+            
+            if prod_list:
+                edit_name = st.selectbox("選擇商品", prod_list, key="edit_sel")
+                curr = df[df['商品名稱'] == str(edit_name)].iloc[-1]
+                
+                st.divider()
+                with st.form("edit_form"):
+                    st.write("📂 **分類與廠商**")
+                    c_a, c_b = st.columns(2)
+                    curr_cat = str(curr.get('分類', '未分類'))
+                    curr_supp = str(curr.get('廠商', ''))
+                    
+                    n_cat = c_a.text_input("分類名稱", value=curr_cat)
+                    n_supp = c_b.text_input("廠商名稱", value=curr_supp)
+                    
+                    st.write("📦 **基本資料**")
+                    c1, c2 = st.columns(2)
+                    n_qty = c1.number_input("庫存", 0, value=int(curr['數量']))
+                    n_price = c2.number_input("單價", 0, value=int(curr['單價']))
+                    n_rem = st.text_area("備註", value=str(curr.get('備註','')))
+                    
+                    st.write("📸 **圖片管理**")
+                    raw_urls = str(curr.get('圖片連結','')).strip()
+                    if raw_urls:
+                        st.image([u.strip() for u in raw_urls.split(',') if u.strip()], width=100)
+                    n_url_str = st.text_area("圖片連結", value=raw_urls)
+                    n_files = st.file_uploader("新增圖片", type=['png','jpg'], accept_multiple_files=True)
+                    
+                    if st.form_submit_button("儲存變更", type="primary"):
+                        final_str = n_url_str
+                        if n_files:
+                            new_urls = []
+                            with st.spinner("上傳中..."):
+                                for f in n_files:
+                                    u = upload_image_to_imgbb(f)
+                                    if u: new_urls.append(u)
+                            if new_urls:
+                                if final_str.strip(): final_str += "," + ",".join(new_urls)
+                                else: final_str = ",".join(new_urls)
+                        
+                        with st.spinner("更新中..."):
+                            update_product_info(edit_name, n_qty, n_price, final_str, n_rem, n_cat, n_supp)
+                            st.rerun()
         else:
-            st.info("無廠商可刪除")
+            st.info("無資料")
+
+# Tab 6: 廠商名錄
+with tab6:
+    st.header("🏭 廠商通訊錄")
+    if not st.session_state["is_admin"]:
+        show_login_block()
+    else:
+        v_df = get_vendors_df()
+        if not v_df.empty:
+            for col in v_df.columns:
+                v_df[col] = v_df[col].astype(str)
+            st.dataframe(
+                v_df,
+                use_container_width=True,
+                column_config={
+                    "廠商名稱": st.column_config.TextColumn("廠商名稱", width="medium"),
+                    "電話": st.column_config.TextColumn("電話", width="small"),
+                }
+            )
+        else:
+            st.info("目前無廠商資料。")
+        
+        st.divider()
+        
+        t6_add, t6_edit, t6_del = st.tabs(["➕ 新增", "✏️ 編輯", "❌ 刪除"])
+        
+        with t6_add:
+            st.subheader("新增廠商")
+            with st.form("add_vendor_form"):
+                v_name = st.text_input("廠商名稱 (必填)")
+                v_contact = st.text_input("聯絡人")
+                v_phone = st.text_input("電話")
+                v_addr = st.text_input("地址")
+                v_rem = st.text_area("備註")
+                
+                submitted = st.form_submit_button("確認新增", type="primary")
+                if submitted:
+                    if v_name:
+                        current_vendors = v_df['廠商名稱'].tolist() if not v_df.empty else []
+                        if v_name in current_vendors:
+                            st.error(f"❌ 廠商 '{v_name}' 已存在！")
+                        else:
+                            add_vendor(v_name, v_contact, v_phone, v_addr, v_rem)
+                            st.rerun()
+                    else:
+                        st.warning("請輸入名稱")
+
+        with t6_edit:
+            st.subheader("編輯廠商資料")
+            if not v_df.empty:
+                edit_v_name = st.selectbox("選擇編輯對象", v_df['廠商名稱'].unique(), key="edit_v_sel")
+                v_data = v_df[v_df['廠商名稱'] == edit_v_name].iloc[0]
+                
+                with st.form("edit_vendor_form"):
+                    st.info(f"正在編輯：**{edit_v_name}**")
+                    ev_contact = st.text_input("聯絡人", value=v_data.get('聯絡人', ''))
+                    ev_phone = st.text_input("電話", value=v_data.get('電話', ''))
+                    ev_addr = st.text_input("地址", value=v_data.get('地址', ''))
+                    ev_rem = st.text_area("備註", value=v_data.get('備註', ''))
+                    
+                    if st.form_submit_button("儲存修改", type="primary"):
+                        with st.spinner("更新中..."):
+                            update_vendor(edit_v_name, ev_contact, ev_phone, ev_addr, ev_rem)
+                            st.rerun()
+            else:
+                st.info("無廠商可編輯")
+
+        with t6_del:
+            st.subheader("刪除廠商")
+            if not v_df.empty:
+                del_v_name = st.selectbox("選擇刪除對象", v_df['廠商名稱'].unique(), key="del_v_sel")
+                if st.button("確認刪除", type="primary", key="del_v_btn"):
+                    delete_vendor(del_v_name)
+                    st.rerun()
+            else:
+                st.info("無廠商可刪除")
