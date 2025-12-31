@@ -7,7 +7,8 @@ import base64
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
-IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b" 
+IMGBB_API_KEY = "請將您的 ImgBB API Key 貼在這裡" 
+CATEGORY_SEPARATOR = " > " # 定義層級分隔符號
 
 # --- 連線設定 ---
 @st.cache_resource(ttl=600)
@@ -80,10 +81,10 @@ def logout():
     st.session_state["is_admin"] = False
     st.rerun()
 
-# 修正：只顯示警告，不停止整個程式，讓後面的 Tab 有機會執行
 def show_login_block():
     st.warning("🔒 **此功能僅限管理員使用**")
     st.info("請使用左側欄位輸入密碼登入。")
+    st.stop()
 
 # --- 核心功能 ---
 
@@ -267,12 +268,13 @@ st.title("☁️ 視覺化進銷存系統")
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨 (限)", "➖ 銷貨 (限)", "❌ 刪除 (限)", "✏️ 編輯 (限)", "🏭 廠商名錄 (限)"])
 
-# Tab 1: 庫存圖牆 (無須權限)
+# Tab 1: 庫存圖牆 (資料夾瀏覽模式)
 with tab1:
     st.header("庫存總覽")
     df = get_inventory_df()
     
     if not df.empty:
+        # 儀表板
         total_items = len(df)
         total_qty = df['數量'].astype(int).sum()
         total_value = (df['數量'].astype(int) * df['單價'].astype(int)).sum()
@@ -289,13 +291,43 @@ with tab1:
         
         st.divider()
 
-        c_filter, c_search, c_refresh = st.columns([2, 3, 1])
-        with c_filter:
-            all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
-            default_index = 0
-            if "未分類" in all_cats: default_index = all_cats.index("未分類")
-            selected_cat = st.selectbox("📂 選擇分類篩選", all_cats, index=default_index)
+        # --- 📂 資料夾瀏覽器 ---
+        c_nav, c_search, c_refresh = st.columns([3, 2, 1])
+        
+        with c_nav:
+            # 取得所有唯一分類
+            all_categories = sorted(df['分類'].unique().tolist())
             
+            # 第一層：主分類 (Root)
+            # 邏輯：取 " > " 前面的字串，如果沒有分隔符號就是自己
+            root_cats = sorted(list(set([c.split(CATEGORY_SEPARATOR)[0] for c in all_categories])))
+            if "未分類" in root_cats: # 讓未分類排前面或後面
+                root_cats.remove("未分類")
+                root_cats.insert(0, "未分類")
+            
+            # 1. 選擇主分類
+            sel_root = st.selectbox("📂 選擇主分類", ["(全部顯示)"] + root_cats)
+            
+            # 2. 選擇子分類 (如果有的話)
+            sel_sub = "(全部)"
+            if sel_root != "(全部顯示)":
+                # 找出所有屬於該 Root 的完整路徑
+                # 例如選 "鞋子"，找出 "鞋子 > 男鞋", "鞋子 > 女鞋", "鞋子"
+                related_cats = [c for c in all_categories if c.startswith(sel_root)]
+                
+                # 如果有子分類 (內容不只等於 Root 本身)
+                if len(related_cats) > 1 or (len(related_cats)==1 and related_cats[0] != sel_root):
+                    # 擷取第二層名稱
+                    sub_cats = []
+                    for rc in related_cats:
+                        parts = rc.split(CATEGORY_SEPARATOR)
+                        if len(parts) > 1:
+                            sub_cats.append(parts[1])
+                    
+                    if sub_cats:
+                        sub_cats = sorted(list(set(sub_cats)))
+                        sel_sub = st.selectbox(f"📂 {sel_root} > 子分類", ["(全部)"] + sub_cats)
+
         with c_search:
             search_query = st.text_input("🔍 關鍵字搜尋", placeholder="名稱、分類或廠商...")
             
@@ -303,9 +335,20 @@ with tab1:
             st.write(""); st.write("")
             if st.button("🔄 重新整理"): st.rerun()
 
+        # --- 篩選邏輯 ---
         df_display = df.copy()
-        if selected_cat != "全部":
-            df_display = df_display[df_display['分類'] == selected_cat]
+        
+        # 1. 分類篩選
+        if sel_root != "(全部顯示)":
+            if sel_sub != "(全部)":
+                # 精確篩選：Root > Sub (比對前綴)
+                target_prefix = f"{sel_root}{CATEGORY_SEPARATOR}{sel_sub}"
+                df_display = df_display[df_display['分類'].str.startswith(target_prefix)]
+            else:
+                # 僅篩選 Root
+                df_display = df_display[df_display['分類'].str.startswith(sel_root)]
+        
+        # 2. 關鍵字篩選
         if search_query:
             mask = df_display['商品名稱'].str.contains(search_query, case=False) | \
                    df_display['廠商'].str.contains(search_query, case=False)
@@ -357,14 +400,15 @@ with tab1:
     else:
         st.info("尚無資料")
 
-# Tab 2: 進貨
+# Tab 2: 進貨 (資料夾輸入邏輯)
 with tab2:
     st.header("商品進貨")
     if not st.session_state["is_admin"]:
         show_login_block()
     else:
-        # ⚠️ 只有登入後才會顯示以下內容
         df = get_inventory_df()
+        
+        # 取得所有完整路徑分類
         existing_cats = sorted(df['分類'].unique().tolist()) if not df.empty else []
         if "未分類" not in existing_cats: existing_cats.insert(0, "未分類")
         
@@ -372,13 +416,17 @@ with tab2:
         existing_vendors = sorted(vendors_df['廠商名稱'].unique().tolist()) if not vendors_df.empty else []
 
         with st.form("add_form"):
-            st.write("📂 **分類設定**")
+            st.write("📂 **分類設定 (支援多層級，如: 鞋子 > 男鞋)**")
+            
+            # 分類選擇邏輯：
+            # 1. 選擇現有父資料夾 (或完整路徑)
+            # 2. 輸入新子資料夾名稱
             c_cat1, c_cat2 = st.columns([1, 1])
             with c_cat1:
-                sel_cat = st.selectbox("選擇現有分類", existing_cats)
+                sel_cat_parent = st.selectbox("選擇現有分類 (父資料夾)", ["(無 / 建立新根目錄)"] + existing_cats)
             with c_cat2:
-                new_cat = st.text_input("或輸入新分類", placeholder="填寫此欄優先使用")
-
+                new_sub_cat = st.text_input("輸入新子分類名稱 (選填)", placeholder="例如：皮鞋 (將建立在左側分類下)")
+            
             st.write("📦 **基本資料**")
             p_name = st.text_input("商品名稱 (ID) - 必填")
             
@@ -401,13 +449,26 @@ with tab2:
 
             if st.form_submit_button("確認進貨", type="primary"):
                 if p_name:
-                    final_cat = new_cat if new_cat.strip() else sel_cat
-                    if not final_cat.strip(): final_cat = "未分類"
+                    # --- 組合分類路徑 ---
+                    if sel_cat_parent == "(無 / 建立新根目錄)":
+                        # 根目錄模式：直接用輸入的名稱當作根目錄
+                        if new_sub_cat.strip():
+                            final_cat = new_sub_cat.strip()
+                        else:
+                            final_cat = "未分類"
+                    else:
+                        # 子目錄模式：父目錄 > 子目錄
+                        if new_sub_cat.strip():
+                            final_cat = f"{sel_cat_parent}{CATEGORY_SEPARATOR}{new_sub_cat.strip()}"
+                        else:
+                            final_cat = sel_cat_parent
                     
+                    # --- 廠商邏輯 ---
                     final_supp = ""
                     if new_vendor.strip(): final_supp = new_vendor.strip()
                     elif sel_vendor != "(無 / 輸入新廠商)": final_supp = sel_vendor
 
+                    # --- 圖片邏輯 ---
                     urls = []
                     if p_url: urls.extend([u.strip() for u in p_url.split(',') if u.strip()])
                     if p_files:
@@ -432,8 +493,11 @@ with tab3:
             all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
             filter_cat = st.selectbox("先選擇分類 (可加速尋找)", all_cats, key="sell_filter")
             
-            if filter_cat != "全部": filtered_df = df[df['分類'] == filter_cat]
+            # 支援層級篩選
+            if filter_cat != "全部": 
+                filtered_df = df[df['分類'].str.startswith(filter_cat)]
             else: filtered_df = df
+            
             prod_list = filtered_df['商品名稱'].unique().tolist()
             
             if prod_list:
@@ -459,8 +523,10 @@ with tab4:
             all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
             filter_cat = st.selectbox("篩選分類", all_cats, key="del_filter", disabled=st.session_state["del_mode"])
             
-            if filter_cat != "全部": filtered_df = df[df['分類'] == filter_cat]
+            if filter_cat != "全部": 
+                filtered_df = df[df['分類'].str.startswith(filter_cat)]
             else: filtered_df = df
+            
             prod_list = filtered_df['商品名稱'].unique().tolist()
 
             c1, c2 = st.columns([3, 1])
@@ -495,8 +561,11 @@ with tab5:
         if not df.empty:
             all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
             filter_cat = st.selectbox("篩選分類", all_cats, key="edit_filter")
-            if filter_cat != "全部": filtered_df = df[df['分類'] == filter_cat]
+            
+            if filter_cat != "全部": 
+                filtered_df = df[df['分類'].str.startswith(filter_cat)]
             else: filtered_df = df
+            
             prod_list = filtered_df['商品名稱'].unique().tolist()
             
             if prod_list:
@@ -510,7 +579,7 @@ with tab5:
                     curr_cat = str(curr.get('分類', '未分類'))
                     curr_supp = str(curr.get('廠商', ''))
                     
-                    n_cat = c_a.text_input("分類名稱", value=curr_cat)
+                    n_cat = c_a.text_input("分類名稱 (可使用 > 建立層級)", value=curr_cat)
                     n_supp = c_b.text_input("廠商名稱", value=curr_supp)
                     
                     st.write("📦 **基本資料**")
