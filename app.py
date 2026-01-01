@@ -8,7 +8,7 @@ import base64
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
 IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b" 
-CATEGORY_SEPARATOR = " > " # 定義層級分隔符號
+CATEGORY_SEPARATOR = " > "
 
 # --- 連線設定 ---
 @st.cache_resource(ttl=600)
@@ -180,21 +180,28 @@ def delete_product(name):
     else:
         st.error(f"❌ 找不到商品")
 
-def update_product_info(name, new_qty, new_price, new_url_str, new_remarks, new_cat, new_supp):
+# 🔥 修正：支援修改商品名稱 (rename)
+def update_product_info(old_name, new_name, new_qty, new_price, new_url_str, new_remarks, new_cat, new_supp):
     sheet = get_worksheet("sheet1")
     if not sheet: return
     clean_url_str = str(new_url_str).strip()
     if len(clean_url_str) > 4000: st.error("❌ 連結太長"); return
+    
     sync_vendor_if_new(new_supp)
-    cell = find_product_cell(sheet, name)
+    
+    # 用舊名字找
+    cell = find_product_cell(sheet, old_name)
+    
     if cell:
+        # 更新所有欄位
+        sheet.update_cell(cell.row, 1, new_name) # 這裡更新商品名稱
         sheet.update_cell(cell.row, 2, new_qty)
         sheet.update_cell(cell.row, 3, new_price)
         sheet.update_cell(cell.row, 4, clean_url_str)
         sheet.update_cell(cell.row, 5, new_remarks)
         sheet.update_cell(cell.row, 6, new_cat)
         sheet.update_cell(cell.row, 7, new_supp)
-        st.success(f"✅ 更新成功")
+        st.success(f"✅ 更新成功！(若有修改名稱，請稍後重整頁面)")
     else:
         st.error(f"❌ 找不到商品")
 
@@ -268,15 +275,12 @@ st.title("☁️ 視覺化進銷存系統")
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨 (限)", "➖ 銷貨 (限)", "❌ 刪除 (限)", "✏️ 編輯 (限)", "🏭 廠商名錄 (限)"])
 
-# Tab 1: 庫存圖牆 (資料夾瀏覽模式)
-# Tab 1: 庫存圖牆 (修正預設分類)
-# Tab 1: 庫存圖牆 (修正搜尋邏輯)
+# Tab 1: 庫存圖牆
 with tab1:
     st.header("庫存總覽")
     df = get_inventory_df()
     
     if not df.empty:
-        # 儀表板
         total_items = len(df)
         total_qty = df['數量'].astype(int).sum()
         total_value = (df['數量'].astype(int) * df['單價'].astype(int)).sum()
@@ -293,12 +297,10 @@ with tab1:
         
         st.divider()
 
-        # --- 📂 資料夾瀏覽器 ---
         c_nav, c_search, c_refresh = st.columns([3, 2, 1])
         
         with c_nav:
             all_categories = sorted(df['分類'].unique().tolist())
-            
             root_cats = sorted(list(set([c.split(CATEGORY_SEPARATOR)[0] for c in all_categories])))
             if "未分類" in root_cats:
                 root_cats.remove("未分類")
@@ -329,10 +331,8 @@ with tab1:
             st.write(""); st.write("")
             if st.button("🔄 重新整理"): st.rerun()
 
-        # --- 篩選邏輯 ---
         df_display = df.copy()
         
-        # 1. 分類篩選
         if sel_root != "(全部顯示)":
             if sel_sub != "(全部)":
                 target_prefix = f"{sel_root}{CATEGORY_SEPARATOR}{sel_sub}"
@@ -340,7 +340,6 @@ with tab1:
             else:
                 df_display = df_display[df_display['分類'].str.startswith(sel_root)]
         
-        # 2. 關鍵字篩選 (已修正：加入分類搜尋)
         if search_query:
             mask = (
                 df_display['商品名稱'].str.contains(search_query, case=False) | 
@@ -395,17 +394,13 @@ with tab1:
     else:
         st.info("尚無資料")
 
-
-
-# Tab 2: 進貨 (優化分類提示詞)
+# Tab 2: 進貨
 with tab2:
     st.header("商品進貨")
     if not st.session_state["is_admin"]:
         show_login_block()
     else:
         df = get_inventory_df()
-        
-        # 取得所有完整路徑分類
         existing_cats = sorted(df['分類'].unique().tolist()) if not df.empty else []
         if "未分類" not in existing_cats: existing_cats.insert(0, "未分類")
         
@@ -414,18 +409,16 @@ with tab2:
 
         with st.form("add_form"):
             st.write("📂 **分類設定**")
-            
             c_cat1, c_cat2 = st.columns([1, 1])
             with c_cat1:
                 sel_cat_parent = st.selectbox("選擇現有分類 (父資料夾)", ["(無 / 建立新根目錄)"] + existing_cats)
             with c_cat2:
-                # 📝 修改：提示詞更明確，並增加說明
                 new_sub_cat = st.text_input(
                     "建立新分類 / 子分類", 
                     placeholder="例如：鞋子 > 男鞋 > 皮鞋",
                     help="💡 萬能欄位：\n1. 輸入「鞋子」建立新根目錄\n2. 輸入「鞋子 > 男鞋」建立多層目錄\n3. 若左側已選分類，這裡輸入的名稱會自動變成子分類。"
                 )
-            
+
             st.write("📦 **基本資料**")
             p_name = st.text_input("商品名稱 (ID) - 必填")
             
@@ -448,30 +441,16 @@ with tab2:
 
             if st.form_submit_button("確認進貨", type="primary"):
                 if p_name:
-                    # --- 組合分類路徑邏輯 ---
                     clean_input = new_sub_cat.strip()
-                    
                     if sel_cat_parent == "(無 / 建立新根目錄)":
-                        # 模式 1 & 2：完全依賴輸入框
-                        if clean_input:
-                            final_cat = clean_input # 使用者輸入什麼就存什麼 (包含 > 符號)
-                        else:
-                            final_cat = "未分類"
+                        final_cat = clean_input if clean_input else "未分類"
                     else:
-                        # 模式 3：父目錄 + 子目錄
-                        if clean_input:
-                            # 智慧防呆：如果使用者在子目錄欄位也打了 >，我們直接串接
-                            # 例如 父="鞋子", 子="男鞋 > 皮鞋" -> 結果="鞋子 > 男鞋 > 皮鞋"
-                            final_cat = f"{sel_cat_parent}{CATEGORY_SEPARATOR}{clean_input}"
-                        else:
-                            final_cat = sel_cat_parent
+                        final_cat = f"{sel_cat_parent}{CATEGORY_SEPARATOR}{clean_input}" if clean_input else sel_cat_parent
                     
-                    # --- 廠商邏輯 ---
                     final_supp = ""
                     if new_vendor.strip(): final_supp = new_vendor.strip()
                     elif sel_vendor != "(無 / 輸入新廠商)": final_supp = sel_vendor
 
-                    # --- 圖片邏輯 ---
                     urls = []
                     if p_url: urls.extend([u.strip() for u in p_url.split(',') if u.strip()])
                     if p_files:
@@ -485,7 +464,6 @@ with tab2:
                 else:
                     st.warning("請輸入名稱")
 
-
 # Tab 3: 銷貨
 with tab3:
     st.header("商品銷貨")
@@ -497,11 +475,8 @@ with tab3:
             all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
             filter_cat = st.selectbox("先選擇分類 (可加速尋找)", all_cats, key="sell_filter")
             
-            # 支援層級篩選
-            if filter_cat != "全部": 
-                filtered_df = df[df['分類'].str.startswith(filter_cat)]
+            if filter_cat != "全部": filtered_df = df[df['分類'].str.startswith(filter_cat)]
             else: filtered_df = df
-            
             prod_list = filtered_df['商品名稱'].unique().tolist()
             
             if prod_list:
@@ -527,10 +502,8 @@ with tab4:
             all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
             filter_cat = st.selectbox("篩選分類", all_cats, key="del_filter", disabled=st.session_state["del_mode"])
             
-            if filter_cat != "全部": 
-                filtered_df = df[df['分類'].str.startswith(filter_cat)]
+            if filter_cat != "全部": filtered_df = df[df['分類'].str.startswith(filter_cat)]
             else: filtered_df = df
-            
             prod_list = filtered_df['商品名稱'].unique().tolist()
 
             c1, c2 = st.columns([3, 1])
@@ -555,7 +528,7 @@ with tab4:
                         st.session_state["del_mode"] = False
                         st.rerun()
 
-# Tab 5: 編輯
+# Tab 5: 編輯 (支援修改名稱)
 with tab5:
     st.header("✏️ 編輯資料")
     if not st.session_state["is_admin"]:
@@ -566,10 +539,8 @@ with tab5:
             all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
             filter_cat = st.selectbox("篩選分類", all_cats, key="edit_filter")
             
-            if filter_cat != "全部": 
-                filtered_df = df[df['分類'].str.startswith(filter_cat)]
+            if filter_cat != "全部": filtered_df = df[df['分類'].str.startswith(filter_cat)]
             else: filtered_df = df
-            
             prod_list = filtered_df['商品名稱'].unique().tolist()
             
             if prod_list:
@@ -578,15 +549,14 @@ with tab5:
                 
                 st.divider()
                 with st.form("edit_form"):
+                    st.write("📦 **核心資料 (可修改名稱)**")
+                    n_name = st.text_input("商品名稱", value=str(edit_name))
+                    
                     st.write("📂 **分類與廠商**")
                     c_a, c_b = st.columns(2)
-                    curr_cat = str(curr.get('分類', '未分類'))
-                    curr_supp = str(curr.get('廠商', ''))
+                    n_cat = c_a.text_input("分類名稱", value=str(curr.get('分類', '未分類')))
+                    n_supp = c_b.text_input("廠商名稱", value=str(curr.get('廠商', '')))
                     
-                    n_cat = c_a.text_input("分類名稱 (可使用 > 建立層級)", value=curr_cat)
-                    n_supp = c_b.text_input("廠商名稱", value=curr_supp)
-                    
-                    st.write("📦 **基本資料**")
                     c1, c2 = st.columns(2)
                     n_qty = c1.number_input("庫存", 0, value=int(curr['數量']))
                     n_price = c2.number_input("單價", 0, value=int(curr['單價']))
@@ -612,7 +582,8 @@ with tab5:
                                 else: final_str = ",".join(new_urls)
                         
                         with st.spinner("更新中..."):
-                            update_product_info(edit_name, n_qty, n_price, final_str, n_rem, n_cat, n_supp)
+                            # 傳入新舊名稱
+                            update_product_info(edit_name, n_name, n_qty, n_price, final_str, n_rem, n_cat, n_supp)
                             st.rerun()
         else:
             st.info("無資料")
