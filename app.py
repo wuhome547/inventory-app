@@ -269,6 +269,7 @@ st.title("☁️ 視覺化進銷存系統")
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨 (限)", "➖ 銷貨 (限)", "❌ 刪除 (限)", "✏️ 編輯 (限)", "🏭 廠商名錄 (限)"])
 
 # Tab 1: 庫存圖牆 (資料夾瀏覽模式)
+# Tab 1: 庫存圖牆 (修正預設分類)
 with tab1:
     st.header("庫存總覽")
     df = get_inventory_df()
@@ -295,35 +296,35 @@ with tab1:
         c_nav, c_search, c_refresh = st.columns([3, 2, 1])
         
         with c_nav:
-            # 取得所有唯一分類
             all_categories = sorted(df['分類'].unique().tolist())
             
             # 第一層：主分類 (Root)
-            # 邏輯：取 " > " 前面的字串，如果沒有分隔符號就是自己
             root_cats = sorted(list(set([c.split(CATEGORY_SEPARATOR)[0] for c in all_categories])))
-            if "未分類" in root_cats: # 讓未分類排前面或後面
+            if "未分類" in root_cats:
                 root_cats.remove("未分類")
-                root_cats.insert(0, "未分類")
+                root_cats.insert(0, "未分類") # 讓未分類排在最前面
             
-            # 1. 選擇主分類
-            sel_root = st.selectbox("📂 選擇主分類", ["(全部顯示)"] + root_cats)
+            # 準備選項列表：["(全部顯示)", "未分類", "鞋子", "衣服"...]
+            root_options = ["(全部顯示)"] + root_cats
             
-            # 2. 選擇子分類 (如果有的話)
+            # --- 關鍵修正：預設選取 "未分類" ---
+            default_idx = 0
+            if "未分類" in root_options:
+                default_idx = root_options.index("未分類")
+            
+            sel_root = st.selectbox("📂 選擇主分類", root_options, index=default_idx)
+            # --------------------------------
+            
+            # 2. 選擇子分類
             sel_sub = "(全部)"
             if sel_root != "(全部顯示)":
-                # 找出所有屬於該 Root 的完整路徑
-                # 例如選 "鞋子"，找出 "鞋子 > 男鞋", "鞋子 > 女鞋", "鞋子"
                 related_cats = [c for c in all_categories if c.startswith(sel_root)]
-                
-                # 如果有子分類 (內容不只等於 Root 本身)
                 if len(related_cats) > 1 or (len(related_cats)==1 and related_cats[0] != sel_root):
-                    # 擷取第二層名稱
                     sub_cats = []
                     for rc in related_cats:
                         parts = rc.split(CATEGORY_SEPARATOR)
                         if len(parts) > 1:
                             sub_cats.append(parts[1])
-                    
                     if sub_cats:
                         sub_cats = sorted(list(set(sub_cats)))
                         sel_sub = st.selectbox(f"📂 {sel_root} > 子分類", ["(全部)"] + sub_cats)
@@ -341,11 +342,9 @@ with tab1:
         # 1. 分類篩選
         if sel_root != "(全部顯示)":
             if sel_sub != "(全部)":
-                # 精確篩選：Root > Sub (比對前綴)
                 target_prefix = f"{sel_root}{CATEGORY_SEPARATOR}{sel_sub}"
                 df_display = df_display[df_display['分類'].str.startswith(target_prefix)]
             else:
-                # 僅篩選 Root
                 df_display = df_display[df_display['分類'].str.startswith(sel_root)]
         
         # 2. 關鍵字篩選
@@ -399,6 +398,7 @@ with tab1:
             st.warning("沒有符合的商品。")
     else:
         st.info("尚無資料")
+
 
 # Tab 2: 進貨 (優化分類提示詞)
 with tab2:
