@@ -7,7 +7,7 @@ import base64
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
-IMGBB_API_KEY = "請將您的 ImgBB API Key 貼在這裡" 
+IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b" 
 CATEGORY_SEPARATOR = " > " # 定義層級分隔符號
 
 # --- 連線設定 ---
@@ -400,7 +400,7 @@ with tab1:
     else:
         st.info("尚無資料")
 
-# Tab 2: 進貨 (資料夾輸入邏輯)
+# Tab 2: 進貨 (優化分類提示詞)
 with tab2:
     st.header("商品進貨")
     if not st.session_state["is_admin"]:
@@ -416,16 +416,18 @@ with tab2:
         existing_vendors = sorted(vendors_df['廠商名稱'].unique().tolist()) if not vendors_df.empty else []
 
         with st.form("add_form"):
-            st.write("📂 **分類設定 (支援多層級，如: 鞋子 > 男鞋)**")
+            st.write("📂 **分類設定**")
             
-            # 分類選擇邏輯：
-            # 1. 選擇現有父資料夾 (或完整路徑)
-            # 2. 輸入新子資料夾名稱
             c_cat1, c_cat2 = st.columns([1, 1])
             with c_cat1:
                 sel_cat_parent = st.selectbox("選擇現有分類 (父資料夾)", ["(無 / 建立新根目錄)"] + existing_cats)
             with c_cat2:
-                new_sub_cat = st.text_input("輸入新子分類名稱 (選填)", placeholder="例如：皮鞋 (將建立在左側分類下)")
+                # 📝 修改：提示詞更明確，並增加說明
+                new_sub_cat = st.text_input(
+                    "建立新分類 / 子分類", 
+                    placeholder="例如：鞋子 > 男鞋 > 皮鞋",
+                    help="💡 萬能欄位：\n1. 輸入「鞋子」建立新根目錄\n2. 輸入「鞋子 > 男鞋」建立多層目錄\n3. 若左側已選分類，這裡輸入的名稱會自動變成子分類。"
+                )
             
             st.write("📦 **基本資料**")
             p_name = st.text_input("商品名稱 (ID) - 必填")
@@ -449,17 +451,21 @@ with tab2:
 
             if st.form_submit_button("確認進貨", type="primary"):
                 if p_name:
-                    # --- 組合分類路徑 ---
+                    # --- 組合分類路徑邏輯 ---
+                    clean_input = new_sub_cat.strip()
+                    
                     if sel_cat_parent == "(無 / 建立新根目錄)":
-                        # 根目錄模式：直接用輸入的名稱當作根目錄
-                        if new_sub_cat.strip():
-                            final_cat = new_sub_cat.strip()
+                        # 模式 1 & 2：完全依賴輸入框
+                        if clean_input:
+                            final_cat = clean_input # 使用者輸入什麼就存什麼 (包含 > 符號)
                         else:
                             final_cat = "未分類"
                     else:
-                        # 子目錄模式：父目錄 > 子目錄
-                        if new_sub_cat.strip():
-                            final_cat = f"{sel_cat_parent}{CATEGORY_SEPARATOR}{new_sub_cat.strip()}"
+                        # 模式 3：父目錄 + 子目錄
+                        if clean_input:
+                            # 智慧防呆：如果使用者在子目錄欄位也打了 >，我們直接串接
+                            # 例如 父="鞋子", 子="男鞋 > 皮鞋" -> 結果="鞋子 > 男鞋 > 皮鞋"
+                            final_cat = f"{sel_cat_parent}{CATEGORY_SEPARATOR}{clean_input}"
                         else:
                             final_cat = sel_cat_parent
                     
@@ -481,6 +487,7 @@ with tab2:
                         add_product(p_name, p_qty, p_price, urls, p_remarks, final_cat, final_supp)
                 else:
                     st.warning("請輸入名稱")
+
 
 # Tab 3: 銷貨
 with tab3:
