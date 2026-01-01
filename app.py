@@ -663,4 +663,19 @@ with tab6:
                     ev_addr = st.text_input("地址", value=v_data.get('地址', ''))
                     ev_rem = st.text_area("備註", value=v_data.get('備註', ''))
                     
-                    if st.for
+                    if st.form_submit_button("儲存修改", type="primary"):
+                        with st.spinner("更新中..."):
+                            update_vendor(edit_v_name, ev_contact, ev_phone, ev_addr, ev_rem)
+                            st.rerun()
+            else:
+                st.info("無廠商可編輯")
+
+        with t6_del:
+            st.subheader("刪除廠商")
+            if not v_df.empty:
+                del_v_name = st.selectbox("選擇刪除對象", v_df['廠商名稱'].unique(), key="del_v_sel")
+                if st.button("確認刪除", type="primary", key="del_v_btn"):
+                    delete_vendor(del_v_name)
+                    st.rerun()
+            else:
+                st.info("無廠商可刪除")
