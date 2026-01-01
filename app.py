@@ -180,28 +180,22 @@ def delete_product(name):
     else:
         st.error(f"❌ 找不到商品")
 
-# 🔥 修正：支援修改商品名稱 (rename)
 def update_product_info(old_name, new_name, new_qty, new_price, new_url_str, new_remarks, new_cat, new_supp):
     sheet = get_worksheet("sheet1")
     if not sheet: return
     clean_url_str = str(new_url_str).strip()
     if len(clean_url_str) > 4000: st.error("❌ 連結太長"); return
-    
     sync_vendor_if_new(new_supp)
-    
-    # 用舊名字找
     cell = find_product_cell(sheet, old_name)
-    
     if cell:
-        # 更新所有欄位
-        sheet.update_cell(cell.row, 1, new_name) # 這裡更新商品名稱
+        sheet.update_cell(cell.row, 1, new_name)
         sheet.update_cell(cell.row, 2, new_qty)
         sheet.update_cell(cell.row, 3, new_price)
         sheet.update_cell(cell.row, 4, clean_url_str)
         sheet.update_cell(cell.row, 5, new_remarks)
         sheet.update_cell(cell.row, 6, new_cat)
         sheet.update_cell(cell.row, 7, new_supp)
-        st.success(f"✅ 更新成功！(若有修改名稱，請稍後重整頁面)")
+        st.success(f"✅ 更新成功！")
     else:
         st.error(f"❌ 找不到商品")
 
@@ -528,7 +522,7 @@ with tab4:
                         st.session_state["del_mode"] = False
                         st.rerun()
 
-# Tab 5: 編輯 (支援修改名稱)
+# Tab 5: 編輯 (加入關鍵字搜尋)
 with tab5:
     st.header("✏️ 編輯資料")
     if not st.session_state["is_admin"]:
@@ -536,15 +530,36 @@ with tab5:
     else:
         df = get_inventory_df()
         if not df.empty:
-            all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
-            filter_cat = st.selectbox("篩選分類", all_cats, key="edit_filter")
+            # --- 篩選區塊 ---
+            c_filter, c_search = st.columns([1, 1])
             
-            if filter_cat != "全部": filtered_df = df[df['分類'].str.startswith(filter_cat)]
-            else: filtered_df = df
+            with c_filter:
+                all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
+                filter_cat = st.selectbox("📂 篩選分類", all_cats, key="edit_filter")
+            
+            with c_search:
+                search_key = st.text_input("🔍 關鍵字搜尋 (名稱/廠商/分類)", key="edit_search")
+
+            # --- 篩選邏輯 ---
+            filtered_df = df.copy()
+            
+            # 1. 分類
+            if filter_cat != "全部": 
+                filtered_df = filtered_df[filtered_df['分類'].str.startswith(filter_cat)]
+            
+            # 2. 關鍵字
+            if search_key:
+                mask = (
+                    filtered_df['商品名稱'].str.contains(search_key, case=False) |
+                    filtered_df['廠商'].str.contains(search_key, case=False) |
+                    filtered_df['分類'].str.contains(search_key, case=False)
+                )
+                filtered_df = filtered_df[mask]
+            
             prod_list = filtered_df['商品名稱'].unique().tolist()
             
             if prod_list:
-                edit_name = st.selectbox("選擇商品", prod_list, key="edit_sel")
+                edit_name = st.selectbox("選擇要編輯的商品", prod_list, key="edit_sel")
                 curr = df[df['商品名稱'] == str(edit_name)].iloc[-1]
                 
                 st.divider()
@@ -582,9 +597,10 @@ with tab5:
                                 else: final_str = ",".join(new_urls)
                         
                         with st.spinner("更新中..."):
-                            # 傳入新舊名稱
                             update_product_info(edit_name, n_name, n_qty, n_price, final_str, n_rem, n_cat, n_supp)
                             st.rerun()
+            else:
+                st.warning("沒有符合的商品")
         else:
             st.info("無資料")
 
@@ -647,19 +663,4 @@ with tab6:
                     ev_addr = st.text_input("地址", value=v_data.get('地址', ''))
                     ev_rem = st.text_area("備註", value=v_data.get('備註', ''))
                     
-                    if st.form_submit_button("儲存修改", type="primary"):
-                        with st.spinner("更新中..."):
-                            update_vendor(edit_v_name, ev_contact, ev_phone, ev_addr, ev_rem)
-                            st.rerun()
-            else:
-                st.info("無廠商可編輯")
-
-        with t6_del:
-            st.subheader("刪除廠商")
-            if not v_df.empty:
-                del_v_name = st.selectbox("選擇刪除對象", v_df['廠商名稱'].unique(), key="del_v_sel")
-                if st.button("確認刪除", type="primary", key="del_v_btn"):
-                    delete_vendor(del_v_name)
-                    st.rerun()
-            else:
-                st.info("無廠商可刪除")
+                    if st.for
