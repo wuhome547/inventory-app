@@ -8,7 +8,7 @@ import re
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
-IMGBB_API_KEY = "請將您的 ImgBB API Key 貼在這裡" 
+IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b" 
 CATEGORY_SEPARATOR = " > " 
 
 # --- 連線設定 ---
@@ -94,31 +94,16 @@ def get_inventory_df():
     if sheet:
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
-        
-        # 1. 基礎清洗
         if '商品名稱' in df.columns: df['商品名稱'] = df['商品名稱'].astype(str).str.strip()
         if '圖片連結' not in df.columns: df['圖片連結'] = ""
         if '備註' not in df.columns: df['備註'] = ""
         if '分類' not in df.columns: df['分類'] = "未分類"
         if '廠商' not in df.columns: df['廠商'] = ""
         
-        # 2. 標準化分類分隔符號
+        # 🛡️ 強力清洗與標準化
         df['分類'] = df['分類'].astype(str).replace(r'\s*[>＞]\s*', CATEGORY_SEPARATOR, regex=True)
         df['分類'] = df['分類'].replace('', '未分類').replace('nan', '未分類')
         df['廠商'] = df['廠商'].astype(str).replace('nan', '')
-
-        # 🔥 3. 預先拆解 4 層分類 (輔助欄位)
-        # 這樣後續篩選時就不用再切字串了，直接查表
-        split_cats = df['分類'].str.split(CATEGORY_SEPARATOR, expand=True)
-        
-        # 補滿 4 層，不足補 None
-        for i in range(4):
-            col_name = f'L{i+1}'
-            if i < split_cats.shape[1]:
-                df[col_name] = split_cats[i].str.strip()
-            else:
-                df[col_name] = None
-                
         return df
     return pd.DataFrame()
 
@@ -293,7 +278,7 @@ st.title("☁️ 視覺化進銷存系統")
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨 (限)", "➖ 銷貨 (限)", "❌ 刪除 (限)", "✏️ 編輯 (限)", "🏭 廠商名錄 (限)"])
 
-# Tab 1: 庫存圖牆
+# Tab 1: 庫存圖牆 (無限分層)
 with tab1:
     st.header("庫存總覽")
     df = get_inventory_df()
@@ -315,75 +300,56 @@ with tab1:
         
         st.divider()
 
-        # 🔥 4層式固定篩選器 (Tab 1)
         c_nav, c_search, c_refresh = st.columns([3, 2, 1])
         
         with c_nav:
-            st.write("📂 **分類篩選 (最多 4 層)**")
-            c1, c2, c3, c4 = st.columns(4)
+            # 🔥 無限層級篩選 (Array-Based)
+            # 1. 預先切割所有分類路徑
+            all_cat_chains = [str(c).split(CATEGORY_SEPARATOR) for c in df['分類'].unique().tolist()]
+            selected_path = [] # 使用者已選路徑
+            level = 0
             
-            # --- Level 1 ---
-            with c1:
-                # 取得 L1 唯一值，移除空值
-                l1_opts = sorted([x for x in df['L1'].unique() if x])
-                if "未分類" in l1_opts: # 確保未分類在最前
-                    l1_opts.remove("未分類")
-                    l1_opts.insert(0, "未分類")
+            while True:
+                # 2. 找出下一層的候選人
+                candidates = set()
+                for chain in all_cat_chains:
+                    # 如果這條路徑比現在層級深，且前綴吻合
+                    if len(chain) > level and chain[:level] == selected_path:
+                        candidates.add(chain[level].strip())
                 
-                sel_l1 = st.selectbox("第 1 層", ["(全部)"] + l1_opts, key="t1_l1")
-            
-            # --- Level 2 ---
-            sel_l2 = "(全部)"
-            if sel_l1 != "(全部)":
-                with c2:
-                    # 篩選 L1 符合的資料，再取 L2
-                    subset_l2 = df[df['L1'] == sel_l1]
-                    l2_opts = sorted([x for x in subset_l2['L2'].unique() if x])
-                    if l2_opts:
-                        sel_l2 = st.selectbox("第 2 層", ["(全部)"] + l2_opts, key="t1_l2")
-            
-            # --- Level 3 ---
-            sel_l3 = "(全部)"
-            if sel_l2 != "(全部)":
-                with c3:
-                    subset_l3 = df[(df['L1'] == sel_l1) & (df['L2'] == sel_l2)]
-                    l3_opts = sorted([x for x in subset_l3['L3'].unique() if x])
-                    if l3_opts:
-                        sel_l3 = st.selectbox("第 3 層", ["(全部)"] + l3_opts, key="t1_l3")
-
-            # --- Level 4 ---
-            sel_l4 = "(全部)"
-            if sel_l3 != "(全部)":
-                with c4:
-                    subset_l4 = df[(df['L1'] == sel_l1) & (df['L2'] == sel_l2) & (df['L3'] == sel_l3)]
-                    l4_opts = sorted([x for x in subset_l4['L4'].unique() if x])
-                    if l4_opts:
-                        sel_l4 = st.selectbox("第 4 層", ["(全部)"] + l4_opts, key="t1_l4")
+                if not candidates: break # 沒路了，結束
+                
+                options = ["(全部顯示)"] + sorted(list(candidates))
+                default_idx = 0
+                if level == 0 and "未分類" in options: default_idx = options.index("未分類")
+                
+                label = "📂 選擇主分類" if level == 0 else f"📂 第 {level+1} 層子分類"
+                selection = st.selectbox(label, options, index=default_idx, key=f"t1_cat_{level}")
+                
+                if selection == "(全部顯示)":
+                    break
+                else:
+                    selected_path.append(selection)
+                    level += 1
 
         with c_search:
-            st.write("") # Padding
-            st.write("") 
             search_query = st.text_input("🔍 關鍵字搜尋", placeholder="名稱、分類或廠商...")
             
         with c_refresh:
             st.write(""); st.write("")
-            st.write("") 
             if st.button("🔄 重新整理"): st.rerun()
 
-        # --- 應用篩選 ---
         df_display = df.copy()
         
-        # 1. 層級篩選 (精準比對)
-        if sel_l1 != "(全部)":
-            df_display = df_display[df_display['L1'] == sel_l1]
-        if sel_l2 != "(全部)":
-            df_display = df_display[df_display['L2'] == sel_l2]
-        if sel_l3 != "(全部)":
-            df_display = df_display[df_display['L3'] == sel_l3]
-        if sel_l4 != "(全部)":
-            df_display = df_display[df_display['L4'] == sel_l4]
+        # 篩選邏輯
+        if selected_path:
+            target_str = CATEGORY_SEPARATOR.join(selected_path)
+            mask_cat = (
+                (df_display['分類'] == target_str) | 
+                (df_display['分類'].str.startswith(target_str + CATEGORY_SEPARATOR))
+            )
+            df_display = df_display[mask_cat]
         
-        # 2. 關鍵字
         if search_query:
             mask = (
                 df_display['商品名稱'].str.contains(search_query, case=False) | 
@@ -438,7 +404,7 @@ with tab1:
     else:
         st.info("尚無資料")
 
-# Tab 2: 進貨
+# Tab 2: 進貨 (警告已修復)
 with tab2:
     st.header("商品進貨")
     if not st.session_state["is_admin"]:
@@ -510,7 +476,7 @@ with tab2:
                 else:
                     st.warning("請輸入名稱")
 
-# Tab 3: 銷貨
+# Tab 3: 銷貨 (警告已修復)
 with tab3:
     st.header("商品銷貨")
     if not st.session_state["is_admin"]:
@@ -536,7 +502,7 @@ with tab3:
         else:
             st.warning("無庫存")
 
-# Tab 4: 刪除
+# Tab 4: 刪除 (警告已修復)
 with tab4:
     st.header("刪除商品")
     if not st.session_state["is_admin"]:
@@ -574,7 +540,7 @@ with tab4:
                         st.session_state["del_mode"] = False
                         st.rerun()
 
-# Tab 5: 編輯
+# Tab 5: 編輯 (無限分層 + 警告修復)
 with tab5:
     st.header("✏️ 編輯資料")
     if not st.session_state["is_admin"]:
@@ -582,47 +548,50 @@ with tab5:
     else:
         df = get_inventory_df()
         if not df.empty:
-            # 🔥 4層式固定篩選器 (Tab 5)
-            st.write("🔍 **快速篩選 (分類 + 搜尋)**")
+            st.write("🔍 **快速篩選 (先選分類，或直接搜尋)**")
+            c_nav, c_search = st.columns([2, 1])
             
-            # --- 分類區 ---
-            c1, c2, c3, c4 = st.columns(4)
-            # Level 1
-            with c1:
-                l1_opts = sorted([x for x in df['L1'].unique() if x])
-                if "未分類" in l1_opts: l1_opts.insert(0, l1_opts.pop(l1_opts.index("未分類")))
-                sel_l1 = st.selectbox("L1", ["(全部)"] + l1_opts, key="e_l1")
-            # Level 2
-            sel_l2 = "(全部)"
-            if sel_l1 != "(全部)":
-                with c2:
-                    subset_l2 = df[df['L1'] == sel_l1]
-                    l2_opts = sorted([x for x in subset_l2['L2'].unique() if x])
-                    if l2_opts: sel_l2 = st.selectbox("L2", ["(全部)"] + l2_opts, key="e_l2")
-            # Level 3
-            sel_l3 = "(全部)"
-            if sel_l2 != "(全部)":
-                with c3:
-                    subset_l3 = df[(df['L1'] == sel_l1) & (df['L2'] == sel_l2)]
-                    l3_opts = sorted([x for x in subset_l3['L3'].unique() if x])
-                    if l3_opts: sel_l3 = st.selectbox("L3", ["(全部)"] + l3_opts, key="e_l3")
-            # Level 4
-            sel_l4 = "(全部)"
-            if sel_l3 != "(全部)":
-                with c4:
-                    subset_l4 = df[(df['L1'] == sel_l1) & (df['L2'] == sel_l2) & (df['L3'] == sel_l3)]
-                    l4_opts = sorted([x for x in subset_l4['L4'].unique() if x])
-                    if l4_opts: sel_l4 = st.selectbox("L4", ["(全部)"] + l4_opts, key="e_l4")
+            with c_nav:
+                # 🔥 Tab 5 也套用相同的列表切片邏輯
+                all_cat_chains = [str(c).split(CATEGORY_SEPARATOR) for c in df['分類'].unique().tolist()]
+                selected_path = []
+                level = 0
+                while True:
+                    next_level_candidates = set()
+                    for chain in all_cat_chains:
+                        if len(chain) > level:
+                            if chain[:level] == selected_path:
+                                next_level_candidates.add(chain[level].strip())
+                    
+                    if not next_level_candidates: break
+                    
+                    options = ["(全部顯示)"] + sorted(list(next_level_candidates))
+                    default_idx = 0
+                    if level == 0 and "未分類" in options: default_idx = options.index("未分類")
+                    
+                    label = "📂 主分類" if level == 0 else f"📂 子分類 ({level})"
+                    selection = st.selectbox(label, options, index=default_idx, key=f"edit_cat_{level}")
+                    
+                    if selection == "(全部顯示)":
+                        break
+                    else:
+                        selected_path.append(selection)
+                        level += 1
 
-            # --- 關鍵字區 ---
-            search_key = st.text_input("🔍 關鍵字搜尋", key="edit_search_key")
+            with c_search:
+                st.write("") # 排版用
+                search_key = st.text_input("🔍 關鍵字搜尋", key="edit_search_key")
 
             # --- 篩選邏輯 ---
             filtered_df = df.copy()
-            if sel_l1 != "(全部)": filtered_df = filtered_df[filtered_df['L1'] == sel_l1]
-            if sel_l2 != "(全部)": filtered_df = filtered_df[filtered_df['L2'] == sel_l2]
-            if sel_l3 != "(全部)": filtered_df = filtered_df[filtered_df['L3'] == sel_l3]
-            if sel_l4 != "(全部)": filtered_df = filtered_df[filtered_df['L4'] == sel_l4]
+            
+            if selected_path:
+                target_path_str = CATEGORY_SEPARATOR.join(selected_path)
+                mask_cat = (
+                    (filtered_df['分類'] == target_path_str) | 
+                    (filtered_df['分類'].str.startswith(target_path_str + CATEGORY_SEPARATOR))
+                )
+                filtered_df = filtered_df[mask_cat]
             
             if search_key:
                 mask = (
@@ -680,7 +649,7 @@ with tab5:
         else:
             st.info("無資料")
 
-# Tab 6: 廠商名錄
+# Tab 6: 廠商名錄 (警告已修復)
 with tab6:
     st.header("🏭 廠商通訊錄")
     if not st.session_state["is_admin"]:
