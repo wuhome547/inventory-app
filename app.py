@@ -7,7 +7,7 @@ import base64
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
-IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b"  
+IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b" 
 CATEGORY_SEPARATOR = " > "
 
 # --- 連線設定 ---
@@ -269,12 +269,13 @@ st.title("☁️ 視覺化進銷存系統")
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨 (限)", "➖ 銷貨 (限)", "❌ 刪除 (限)", "✏️ 編輯 (限)", "🏭 廠商名錄 (限)"])
 
-# Tab 1: 庫存圖牆
+# Tab 1: 庫存圖牆 (支援無限層級分類)
 with tab1:
     st.header("庫存總覽")
     df = get_inventory_df()
     
     if not df.empty:
+        # --- 儀表板 ---
         total_items = len(df)
         total_qty = df['數量'].astype(int).sum()
         total_value = (df['數量'].astype(int) * df['單價'].astype(int)).sum()
@@ -291,41 +292,69 @@ with tab1:
         
         st.divider()
 
+        # --- 📂 動態層級篩選器 ---
         c_nav, c_search, c_refresh = st.columns([3, 2, 1])
         
         with c_nav:
+            # 取得目前所有分類
             current_cats = sorted(df['分類'].unique().tolist())
+            
+            # 用來累積使用者的選擇路徑
             selected_path = []
             
+            # 使用迴圈動態生成選單
             level = 0
             while True:
+                # 找出目前層級可用的選項
+                # 邏輯：根據已選路徑，過濾出下一層的候選名單
                 if level == 0:
+                    # 第一層：直接取最左邊的
                     candidates = [c.split(CATEGORY_SEPARATOR)[0] for c in current_cats]
                 else:
+                    # 後續層級：必須符合前一層的選擇
+                    # 例如已選 "鞋子"，則候選名單為 "鞋子 > 男鞋" 中的 "男鞋"
                     prefix = CATEGORY_SEPARATOR.join(selected_path) + CATEGORY_SEPARATOR
                     candidates = []
                     for c in current_cats:
                         if c.startswith(prefix):
+                            # 取出剩下部分的「第一個」單字
+                            # 例如 "鞋子 > 男鞋 > 運動鞋"，prefix="鞋子 > "
+                            # 剩下 "男鞋 > 運動鞋"，取 "男鞋"
                             remainder = c[len(prefix):]
-                            if remainder: candidates.append(remainder.split(CATEGORY_SEPARATOR)[0])
+                            if remainder:
+                                candidates.append(remainder.split(CATEGORY_SEPARATOR)[0])
                 
+                # 去除重複並排序
                 unique_candidates = sorted(list(set(candidates)))
-                if not unique_candidates: break
                 
+                # 如果沒有下一層選項了，跳出迴圈
+                if not unique_candidates:
+                    break
+                
+                # 準備選單選項
                 options = ["(全部顯示)"] + unique_candidates
-                default_idx = 0
-                if level == 0 and "未分類" in options: default_idx = options.index("未分類")
                 
+                # 第一層預設選「未分類」的邏輯 (只在 level 0 做)
+                default_idx = 0
+                if level == 0 and "未分類" in options:
+                    default_idx = options.index("未分類")
+                
+                # 顯示選單
                 label = "📂 選擇主分類" if level == 0 else f"📂 第 {level+1} 層子分類"
                 selection = st.selectbox(label, options, index=default_idx, key=f"cat_lvl_{level}")
                 
-                if selection == "(全部顯示)": break
+                if selection == "(全部顯示)":
+                    break # 使用者不想選更細了，停止生成
                 else:
                     selected_path.append(selection)
                     level += 1
+                    
+                    # 如果選到的剛好是一個終點 (例如 "未分類")，且沒有更深的，也停止
+                    # 判斷方式：檢查是否有以此路徑為開頭，且長度更長的
                     current_full_path = CATEGORY_SEPARATOR.join(selected_path)
                     has_deeper = any(c.startswith(current_full_path + CATEGORY_SEPARATOR) for c in current_cats)
-                    if not has_deeper: break
+                    if not has_deeper:
+                        break
 
         with c_search:
             search_query = st.text_input("🔍 關鍵字搜尋", placeholder="名稱、分類或廠商...")
@@ -334,16 +363,29 @@ with tab1:
             st.write(""); st.write("")
             if st.button("🔄 重新整理"): st.rerun()
 
+        # --- 篩選邏輯 ---
         df_display = df.copy()
         
+        # 1. 分類篩選 (精準匹配路徑開頭)
         if selected_path:
             target_path_str = CATEGORY_SEPARATOR.join(selected_path)
+            # 這裡有兩種情況：
+            # A. 使用者選到一半停住 (例如選了 "鞋子") -> 顯示所有 "鞋子 > ..."
+            # B. 使用者選到底 (例如 "鞋子 > 男鞋") -> 顯示 "鞋子 > 男鞋 > ..." 或是精確等於 "鞋子 > 男鞋"
+            
+            # 使用 startswith 就可以涵蓋以上所有情況
+            # 為了避免 "鞋子" 匹配到 "鞋子櫃" (字串前綴誤判)，我們補上分隔符號判斷
+            # 但因為 startswith 比較簡單，通常分類名稱不會這麼像，這裡直接用 startswith 即可
+            
+            # 邏輯修正：如果只選 "鞋子"，要包含 "鞋子" 本身以及 "鞋子 > ..."
+            # 所以條件是：等於 target 或是 以 target + separator 開頭
             mask_cat = (
                 (df_display['分類'] == target_path_str) | 
                 (df_display['分類'].str.startswith(target_path_str + CATEGORY_SEPARATOR))
             )
             df_display = df_display[mask_cat]
         
+        # 2. 關鍵字篩選
         if search_query:
             mask = (
                 df_display['商品名稱'].str.contains(search_query, case=False) | 
