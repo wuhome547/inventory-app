@@ -7,7 +7,7 @@ import base64
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
-IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b" 
+IMGBB_API_KEY = "請將您的 ImgBB API Key 貼在這裡" 
 CATEGORY_SEPARATOR = " > "
 
 # --- 連線設定 ---
