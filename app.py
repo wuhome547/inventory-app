@@ -9,7 +9,6 @@ import re
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
 IMGBB_API_KEY = "請將您的 ImgBB API Key 貼在這裡" 
-# ⚠️ 重要：這是層級分隔符號，請確保與您輸入的一致
 CATEGORY_SEPARATOR = " > " 
 
 # --- 連線設定 ---
@@ -101,7 +100,7 @@ def get_inventory_df():
         if '分類' not in df.columns: df['分類'] = "未分類"
         if '廠商' not in df.columns: df['廠商'] = ""
         
-        # 強制標準化：確保分隔符號前後有空白，這樣 split 才準
+        # 標準化：確保分隔符號一致
         df['分類'] = df['分類'].astype(str).replace(r'\s*>\s*', CATEGORY_SEPARATOR, regex=True)
         df['分類'] = df['分類'].replace('', '未分類').replace('nan', '未分類')
         df['廠商'] = df['廠商'].astype(str).replace('nan', '')
@@ -138,7 +137,6 @@ def add_product(name, quantity, price, image_urls, remarks, category, supplier):
     if not sheet: return
     name_str = str(name).strip()
     
-    # 寫入時也標準化
     cat_str = str(category).strip()
     cat_str = re.sub(r'\s*>\s*', CATEGORY_SEPARATOR, cat_str)
     if not cat_str: cat_str = "未分類"
@@ -305,50 +303,38 @@ with tab1:
         c_nav, c_search, c_refresh = st.columns([3, 2, 1])
         
         with c_nav:
-            # 🔥 關鍵修正：逐層過濾 (Layer-by-Layer)
-            # 1. 取得所有分類清單
-            subset_cats = sorted(df['分類'].unique().tolist())
-            selected_path = [] # 記錄使用者選了什麼: ['鞋子', '男鞋']
+            # 🔥 終極修正：陣列切片法 (List Slicing)
+            # 1. 將所有分類預先切好成 List
+            all_cat_paths = [str(c).split(CATEGORY_SEPARATOR) for c in df['分類'].unique().tolist()]
+            selected_path = [] # 使用者已選的路徑
             
             level = 0
             while True:
-                # 2. 找出「在目前已選路徑下」的「下一層候選人」
+                # 2. 找出下一層的候選人
                 candidates = set()
-                for c in subset_cats:
-                    parts = str(c).split(CATEGORY_SEPARATOR)
-                    # 如果這個分類的層數夠深 (比 level 多)
-                    if len(parts) > level:
-                        candidates.add(parts[level].strip())
+                for path in all_cat_paths:
+                    # 條件 A: 這個路徑夠深，有這一層
+                    if len(path) > level:
+                        # 條件 B: 這個路徑的前面幾層，跟使用者選的一樣
+                        # 例如 selected_path=['鞋子'], path=['鞋子', '男鞋'] -> 前1個字一樣 -> 候選 '男鞋'
+                        if path[:level] == selected_path:
+                            candidates.add(path[level].strip())
                 
-                # 如果沒有候選人了，代表已經選到底了
-                if not candidates:
-                    break
+                if not candidates: break # 沒路了
                 
-                # 3. 顯示選單
                 options = ["(全部顯示)"] + sorted(list(candidates))
                 
-                # 第一層預設選「未分類」
                 default_idx = 0
                 if level == 0 and "未分類" in options: default_idx = options.index("未分類")
                 
-                label = "📂 選擇主分類" if level == 0 else f"📂 子分類 ({level})"
-                selection = st.selectbox(label, options, index=default_idx, key=f"t1_nav_{level}")
+                label = "📂 選擇主分類" if level == 0 else f"📂 第 {level+1} 層子分類"
+                selection = st.selectbox(label, options, index=default_idx, key=f"t1_cat_{level}")
                 
                 if selection == "(全部顯示)":
                     break
                 else:
                     selected_path.append(selection)
                     level += 1
-                    
-                    # 4. 關鍵步驟：把不符合這次選擇的分類踢掉！
-                    # 這樣下一圈迴圈時，candidates 只會剩下符合目前路徑的子分類
-                    new_subset = []
-                    for c in subset_cats:
-                        parts = str(c).split(CATEGORY_SEPARATOR)
-                        # 保留條件：層數夠深，且這一層的名稱等於選擇的名稱
-                        if len(parts) >= level and parts[level-1].strip() == selection:
-                            new_subset.append(c)
-                    subset_cats = new_subset
 
         with c_search:
             search_query = st.text_input("🔍 關鍵字搜尋", placeholder="名稱、分類或廠商...")
@@ -359,8 +345,8 @@ with tab1:
 
         df_display = df.copy()
         
-        # 分類篩選
         if selected_path:
+            # 組合目標路徑
             target_path_str = CATEGORY_SEPARATOR.join(selected_path)
             mask_cat = (
                 (df_display['分類'] == target_path_str) | 
@@ -570,16 +556,17 @@ with tab5:
             c_nav, c_search = st.columns([2, 1])
             
             with c_nav:
-                # 🔥 Tab 5 也套用相同的逐層過濾邏輯
-                subset_cats = sorted(df['分類'].unique().tolist())
+                # 🔥 Tab 5 也套用相同的陣列切片邏輯
+                all_cat_paths = [str(c).split(CATEGORY_SEPARATOR) for c in df['分類'].unique().tolist()]
                 selected_path = []
+                
                 level = 0
                 while True:
                     candidates = set()
-                    for c in subset_cats:
-                        parts = str(c).split(CATEGORY_SEPARATOR)
-                        if len(parts) > level:
-                            candidates.add(parts[level].strip())
+                    for path in all_cat_paths:
+                        if len(path) > level:
+                            if path[:level] == selected_path:
+                                candidates.add(path[level].strip())
                     
                     if not candidates: break
                     
@@ -587,19 +574,13 @@ with tab5:
                     default_idx = 0
                     if level == 0 and "未分類" in options: default_idx = options.index("未分類")
                     
-                    label = "📂 主分類" if level == 0 else f"📂 子分類 ({level})"
-                    selection = st.selectbox(label, options, index=default_idx, key=f"edit_nav_{level}")
+                    label = "📂 主分類" if level == 0 else f"📂 子分類 {level}"
+                    selection = st.selectbox(label, options, index=default_idx, key=f"edit_cat_{level}")
                     
                     if selection == "(全部顯示)":
                         break
                     else:
                         selected_path.append(selection)
-                        new_subset = []
-                        for c in subset_cats:
-                            parts = str(c).split(CATEGORY_SEPARATOR)
-                            if len(parts) >= level and parts[level].strip() == selection:
-                                new_subset.append(c)
-                        subset_cats = new_subset
                         level += 1
 
             with c_search:
