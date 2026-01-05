@@ -8,8 +8,8 @@ import re
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
-IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b" 
-CATEGORY_SEPARATOR = " > "
+IMGBB_API_KEY = "請將您的 ImgBB API Key 貼在這裡" 
+CATEGORY_SEPARATOR = " > " # 重要：這是層級分隔符號
 
 # --- 連線設定 ---
 @st.cache_resource(ttl=600)
@@ -100,8 +100,8 @@ def get_inventory_df():
         if '分類' not in df.columns: df['分類'] = "未分類"
         if '廠商' not in df.columns: df['廠商'] = ""
         
-        # 強制標準化：確保所有分隔符號前後都有空白
-        df['分類'] = df['分類'].astype(str).replace(r'\s*>\s*', ' > ', regex=True)
+        # 資料標準化：把所有不規則的 > 符號統一改成 " > "
+        df['分類'] = df['分類'].astype(str).replace(r'\s*>\s*', CATEGORY_SEPARATOR, regex=True)
         df['分類'] = df['分類'].replace('', '未分類').replace('nan', '未分類')
         df['廠商'] = df['廠商'].astype(str).replace('nan', '')
         return df
@@ -137,8 +137,9 @@ def add_product(name, quantity, price, image_urls, remarks, category, supplier):
     if not sheet: return
     name_str = str(name).strip()
     
+    # 寫入時標準化分類
     cat_str = str(category).strip()
-    cat_str = re.sub(r'\s*>\s*', ' > ', cat_str) # 寫入前標準化
+    cat_str = re.sub(r'\s*>\s*', CATEGORY_SEPARATOR, cat_str)
     if not cat_str: cat_str = "未分類"
     
     supp_str = str(supplier).strip()
@@ -192,7 +193,7 @@ def update_product_info(old_name, new_name, new_qty, new_price, new_url_str, new
     clean_url_str = str(new_url_str).strip()
     if len(clean_url_str) > 4000: st.error("❌ 連結太長"); return
     
-    cat_clean = re.sub(r'\s*>\s*', ' > ', str(new_cat).strip())
+    cat_clean = re.sub(r'\s*>\s*', CATEGORY_SEPARATOR, str(new_cat).strip())
     
     sync_vendor_if_new(new_supp)
     cell = find_product_cell(sheet, old_name)
@@ -303,52 +304,46 @@ with tab1:
         c_nav, c_search, c_refresh = st.columns([3, 2, 1])
         
         with c_nav:
-            # 取得所有分類 (確保已經標準化)
-            current_cats = sorted(df['分類'].unique().tolist())
-            selected_path = []
+            # 🔥 關鍵修正：路徑拆解法 (Token-based)
+            # 使用 subset_cats 來保存「目前剩下的候選商品」
+            subset_cats = sorted(df['分類'].unique().tolist())
+            selected_path = [] # 儲存已選的路徑陣列 (例如 ['鞋子', '男鞋'])
             
             level = 0
             while True:
-                # 準備過濾的前綴
-                # 如果是第一層 (level 0)，前綴是空字串
-                # 如果是第二層，前綴是 "A > "
-                if level == 0:
-                    prefix = ""
-                else:
-                    prefix = CATEGORY_SEPARATOR.join(selected_path) + CATEGORY_SEPARATOR
+                # 1. 找出目前層級可用的分類名稱 (Token)
+                candidates = set()
+                for c in subset_cats:
+                    parts = c.split(CATEGORY_SEPARATOR)
+                    # 確保該商品有這麼深，且前綴相符 (subset_cats 已經是過濾過的，所以前綴一定相符)
+                    if len(parts) > level:
+                        candidates.add(parts[level])
                 
-                # 找出符合前綴的分類
-                candidates = []
-                for c in current_cats:
-                    if c.startswith(prefix):
-                        # 移除前綴，取得剩下的部分
-                        remainder = c[len(prefix):]
-                        if remainder:
-                            # 取出剩下部分的第一段 (下一個層級名稱)
-                            next_part = remainder.split(CATEGORY_SEPARATOR)[0]
-                            candidates.append(next_part)
+                if not candidates:
+                    break # 沒有更深層了，結束
                 
-                # 去重並排序
-                unique_candidates = sorted(list(set(candidates)))
+                # 2. 顯示選單
+                options = ["(全部顯示)"] + sorted(list(candidates))
                 
-                # 如果沒有下一層選項了，跳出迴圈
-                if not unique_candidates:
-                    break
-                
-                # 顯示選單
-                options = ["(全部顯示)"] + unique_candidates
-                
-                # 第一層預設選「未分類」
+                # 預設選取 "未分類" (僅限第一層)
                 default_idx = 0
                 if level == 0 and "未分類" in options: default_idx = options.index("未分類")
                 
                 label = "📂 選擇主分類" if level == 0 else f"📂 第 {level+1} 層子分類"
-                selection = st.selectbox(label, options, index=default_idx, key=f"cat_lvl_{level}")
+                selection = st.selectbox(label, options, index=default_idx, key=f"t1_cat_{level}")
                 
                 if selection == "(全部顯示)":
-                    break
+                    break # 使用者停止選擇
                 else:
+                    # 3. 根據選擇，過濾 subset_cats，讓下一圈只處理符合的商品
                     selected_path.append(selection)
+                    new_subset = []
+                    for c in subset_cats:
+                        parts = c.split(CATEGORY_SEPARATOR)
+                        # 如果這個商品的第 level 層等於選取的值，保留它
+                        if len(parts) > level and parts[level] == selection:
+                            new_subset.append(c)
+                    subset_cats = new_subset
                     level += 1
 
         with c_search:
@@ -360,17 +355,15 @@ with tab1:
 
         df_display = df.copy()
         
-        # 分類篩選
+        # 應用分類篩選
         if selected_path:
-            # 組合目標路徑，例如 "鞋子 > 男鞋"
-            target_path = CATEGORY_SEPARATOR.join(selected_path)
+            # 這裡的邏輯是：只要分類路徑「包含」選取路徑的都算
+            # 組合目標字串: "鞋子 > 男鞋"
+            target_str = CATEGORY_SEPARATOR.join(selected_path)
             
-            # 篩選條件：
-            # 1. 完全等於目標路徑 (例如分類就是 "鞋子 > 男鞋")
-            # 2. 以目標路徑 + 分隔符號 開頭 (例如 "鞋子 > 男鞋 > 運動鞋")
             mask_cat = (
-                (df_display['分類'] == target_path) | 
-                (df_display['分類'].str.startswith(target_path + CATEGORY_SEPARATOR))
+                (df_display['分類'] == target_str) | 
+                (df_display['分類'].str.startswith(target_str + CATEGORY_SEPARATOR))
             )
             df_display = df_display[mask_cat]
         
@@ -564,7 +557,7 @@ with tab4:
                         st.session_state["del_mode"] = False
                         st.rerun()
 
-# Tab 5: 編輯 (支援無限層級)
+# Tab 5: 編輯 (修正：Token-based 篩選)
 with tab5:
     st.header("✏️ 編輯資料")
     if not st.session_state["is_admin"]:
@@ -576,11 +569,16 @@ with tab5:
             c_nav, c_search = st.columns([2, 1])
             
             with c_nav:
-                current_cats = sorted(df['分類'].unique().tolist())
+                # 🔥 這裡也套用相同的 Token-based 邏輯
+                subset_cats = sorted(df['分類'].unique().tolist())
                 selected_path = []
                 level = 0
                 while True:
-                    if level == 0:
-                        candidates = [c.split(CATEGORY_SEPARATOR)[0] for c in current_cats]
-                    else:
-                        prefix = CATEGORY_SEPARATOR.join(s
+                    candidates = set()
+                    for c in subset_cats:
+                        parts = c.split(CATEGORY_SEPARATOR)
+                        if len(parts) > level:
+                            candidates.add(parts[level])
+                    
+                    if not candidates: break
+             
