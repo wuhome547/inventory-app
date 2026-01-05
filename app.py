@@ -304,92 +304,9 @@ with tab1:
         c_nav, c_search, c_refresh = st.columns([3, 2, 1])
         
         with c_nav:
-            # 🔥 終極修正：使用「全列表比對法」確保無限層級
-            # 先將所有分類切割成 List： ['鞋子', '男鞋', '運動鞋']
-            all_cat_chains = [str(c).split(CATEGORY_SEPARATOR) for c in df['分類'].unique().tolist()]
-            
-            selected_path = [] # 儲存使用者已選的路徑
-            level = 0
-            
-            while True:
-                # 找出「符合當前已選路徑」的下一層候選人
-                next_level_candidates = set()
-                
-                for chain in all_cat_chains:
-                    # 1. 檢查這條路徑長度是否夠深 (大於當前 level)
-                    # 2. 檢查這條路徑的前面部分，是否跟使用者選的一樣 (selected_path)
-                    if len(chain) > level:
-                        # 檢查前綴是否吻合
-                        # 例如 selected_path=['鞋子'], chain=['鞋子', '男鞋'] -> chain[:1] == ['鞋子'] -> 吻合
-                        if chain[:level] == selected_path:
-                            next_level_candidates.add(chain[level].strip())
-                
-                # 如果沒有候選人了，結束迴圈
-                if not next_level_candidates:
-                    break
-                
-                # 顯示選單
-                options = ["(全部顯示)"] + sorted(list(next_level_candidates))
-                
-                default_idx = 0
-                if level == 0 and "未分類" in options: default_idx = options.index("未分類")
-                
-                label = "📂 選擇主分類" if level == 0 else f"📂 第 {level+1} 層子分類"
-                selection = st.selectbox(label, options, index=default_idx, key=f"t1_cat_{level}")
-                
-                if selection == "(全部顯示)":
-                    break # 使用者不想再往下選了
-                else:
-                    selected_path.append(selection)
-                    level += 1
-
-        with c_search:
-            search_query = st.text_input("🔍 關鍵字搜尋", placeholder="名稱、分類或廠商...")
-            
-        with c_refresh:
-            st.write(""); st.write("")
-            if st.button("🔄 重新整理"): st.rerun()
-
-        df_display = df.copy()
-        
-        if selected_path:
-            # 組合目標路徑
-            target_path_str = CATEGORY_SEPARATOR.join(selected_path)
-            mask_cat = (
-                (df_display['分類'] == target_path_str) | 
-                (df_display['分類'].str.startswith(target_path_str + CATEGORY_SEPARATOR))
-            )
-            df_display = df_display[mask_cat]
-        
-        if search_query:
-            mask = (
-                df_display['商品名稱'].str.contains(search_query, case=False) | 
-                df_display['廠商'].str.contains(search_query, case=False) |
-                df_display['分類'].str.contains(search_query, case=False)
-            )
-            df_display = df_display[mask]
-
-        if not df_display.empty:
-            st.subheader(f"📋 商品清單 ({len(df_display)} 筆)")
-            
-            df_display['圖片連結'] = df_display['圖片連結'].astype(str).str.strip().replace('nan', '')
-            df_display['主圖'] = df_display['圖片連結'].apply(lambda x: x.split(',')[0] if x else "")
-            
-            st.dataframe(
-                df_display,
-                column_config={
-                    "商品名稱": st.column_config.TextColumn("商品名稱"),
-                    "分類": st.column_config.TextColumn("分類", width="small"),
-                    "廠商": st.column_config.TextColumn("廠商", width="medium"),
-                    "主圖": st.column_config.ImageColumn("圖片", width="small"),
-                    "單價": st.column_config.NumberColumn(format="$%d"),
-                    "備註": st.column_config.TextColumn("備註", width="medium"),
-                },
-                column_order=["分類", "商品名稱", "廠商", "主圖", "數量", "單價"],
-                use_container_width=True,
-                hide_index=True
-            )
+ 
             
             st.divider()
             
+
 
