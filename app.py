@@ -4,11 +4,11 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import requests
 import base64
-import re # 引入正則表達式，處理不規則的 > 符號
+import re
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
-IMGBB_API_KEY = "請將您的 ImgBB API Key 貼在這裡" 
+IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b" 
 CATEGORY_SEPARATOR = " > "
 
 # --- 連線設定 ---
@@ -87,27 +87,22 @@ def show_login_block():
     st.info("請使用左側欄位輸入密碼登入。")
     st.stop()
 
-# --- 核心功能 (加入強力資料清洗) ---
+# --- 核心功能 ---
 
 def get_inventory_df():
     sheet = get_worksheet("sheet1")
     if sheet:
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
-        
-        # 1. 基礎清洗
         if '商品名稱' in df.columns: df['商品名稱'] = df['商品名稱'].astype(str).str.strip()
         if '圖片連結' not in df.columns: df['圖片連結'] = ""
         if '備註' not in df.columns: df['備註'] = ""
         if '分類' not in df.columns: df['分類'] = "未分類"
         if '廠商' not in df.columns: df['廠商'] = ""
         
-        # 2. 🔥 關鍵修正：標準化分類格式
-        # 把所有 " >", "> ", ">" 全部替換成標準的 " > "
-        # 這樣無限層級篩選器就能正確切割字串了
+        # 強制標準化：確保所有分隔符號前後都有空白
         df['分類'] = df['分類'].astype(str).replace(r'\s*>\s*', ' > ', regex=True)
         df['分類'] = df['分類'].replace('', '未分類').replace('nan', '未分類')
-        
         df['廠商'] = df['廠商'].astype(str).replace('nan', '')
         return df
     return pd.DataFrame()
@@ -142,9 +137,8 @@ def add_product(name, quantity, price, image_urls, remarks, category, supplier):
     if not sheet: return
     name_str = str(name).strip()
     
-    # 寫入時也做一次標準化，確保資料庫整齊
     cat_str = str(category).strip()
-    cat_str = re.sub(r'\s*>\s*', ' > ', cat_str) # 標準化
+    cat_str = re.sub(r'\s*>\s*', ' > ', cat_str) # 寫入前標準化
     if not cat_str: cat_str = "未分類"
     
     supp_str = str(supplier).strip()
@@ -198,7 +192,6 @@ def update_product_info(old_name, new_name, new_qty, new_price, new_url_str, new
     clean_url_str = str(new_url_str).strip()
     if len(clean_url_str) > 4000: st.error("❌ 連結太長"); return
     
-    # 寫入時標準化
     cat_clean = re.sub(r'\s*>\s*', ' > ', str(new_cat).strip())
     
     sync_vendor_if_new(new_supp)
@@ -310,29 +303,42 @@ with tab1:
         c_nav, c_search, c_refresh = st.columns([3, 2, 1])
         
         with c_nav:
-            # 取得所有分類 (已經過清洗)
+            # 取得所有分類 (確保已經標準化)
             current_cats = sorted(df['分類'].unique().tolist())
             selected_path = []
             
             level = 0
             while True:
+                # 準備過濾的前綴
+                # 如果是第一層 (level 0)，前綴是空字串
+                # 如果是第二層，前綴是 "A > "
                 if level == 0:
-                    candidates = [c.split(CATEGORY_SEPARATOR)[0] for c in current_cats]
+                    prefix = ""
                 else:
                     prefix = CATEGORY_SEPARATOR.join(selected_path) + CATEGORY_SEPARATOR
-                    candidates = []
-                    for c in current_cats:
-                        if c.startswith(prefix):
-                            remainder = c[len(prefix):]
-                            if remainder:
-                                candidates.append(remainder.split(CATEGORY_SEPARATOR)[0])
                 
+                # 找出符合前綴的分類
+                candidates = []
+                for c in current_cats:
+                    if c.startswith(prefix):
+                        # 移除前綴，取得剩下的部分
+                        remainder = c[len(prefix):]
+                        if remainder:
+                            # 取出剩下部分的第一段 (下一個層級名稱)
+                            next_part = remainder.split(CATEGORY_SEPARATOR)[0]
+                            candidates.append(next_part)
+                
+                # 去重並排序
                 unique_candidates = sorted(list(set(candidates)))
                 
+                # 如果沒有下一層選項了，跳出迴圈
                 if not unique_candidates:
                     break
                 
+                # 顯示選單
                 options = ["(全部顯示)"] + unique_candidates
+                
+                # 第一層預設選「未分類」
                 default_idx = 0
                 if level == 0 and "未分類" in options: default_idx = options.index("未分類")
                 
@@ -354,11 +360,17 @@ with tab1:
 
         df_display = df.copy()
         
+        # 分類篩選
         if selected_path:
-            target_path_str = CATEGORY_SEPARATOR.join(selected_path)
+            # 組合目標路徑，例如 "鞋子 > 男鞋"
+            target_path = CATEGORY_SEPARATOR.join(selected_path)
+            
+            # 篩選條件：
+            # 1. 完全等於目標路徑 (例如分類就是 "鞋子 > 男鞋")
+            # 2. 以目標路徑 + 分隔符號 開頭 (例如 "鞋子 > 男鞋 > 運動鞋")
             mask_cat = (
-                (df_display['分類'] == target_path_str) | 
-                (df_display['分類'].str.startswith(target_path_str + CATEGORY_SEPARATOR))
+                (df_display['分類'] == target_path) | 
+                (df_display['分類'].str.startswith(target_path + CATEGORY_SEPARATOR))
             )
             df_display = df_display[mask_cat]
         
@@ -469,7 +481,6 @@ with tab2:
                     else:
                         final_cat = f"{sel_cat_parent}{CATEGORY_SEPARATOR}{clean_input}" if clean_input else sel_cat_parent
                     
-                    # 確保寫入前也是乾淨的格式
                     final_cat = re.sub(r'\s*>\s*', ' > ', final_cat)
                     
                     final_supp = ""
@@ -553,7 +564,7 @@ with tab4:
                         st.session_state["del_mode"] = False
                         st.rerun()
 
-# Tab 5: 編輯
+# Tab 5: 編輯 (支援無限層級)
 with tab5:
     st.header("✏️ 編輯資料")
     if not st.session_state["is_admin"]:
@@ -572,171 +583,4 @@ with tab5:
                     if level == 0:
                         candidates = [c.split(CATEGORY_SEPARATOR)[0] for c in current_cats]
                     else:
-                        prefix = CATEGORY_SEPARATOR.join(selected_path) + CATEGORY_SEPARATOR
-                        candidates = []
-                        for c in current_cats:
-                            if c.startswith(prefix):
-                                remainder = c[len(prefix):]
-                                if remainder: candidates.append(remainder.split(CATEGORY_SEPARATOR)[0])
-                    
-                    unique_candidates = sorted(list(set(candidates)))
-                    if not unique_candidates: break
-                    
-                    options = ["(全部顯示)"] + unique_candidates
-                    default_idx = 0
-                    if level == 0 and "未分類" in options: default_idx = options.index("未分類")
-                    
-                    label = "📂 主分類" if level == 0 else f"📂 子分類 {level}"
-                    selection = st.selectbox(label, options, index=default_idx, key=f"edit_cat_lvl_{level}")
-                    
-                    if selection == "(全部顯示)": break
-                    else:
-                        selected_path.append(selection)
-                        level += 1
-
-            with c_search:
-                st.write("") # 排版用
-                search_key = st.text_input("🔍 關鍵字搜尋", key="edit_search_key")
-
-            # --- 篩選邏輯 ---
-            filtered_df = df.copy()
-            
-            if selected_path:
-                target_path_str = CATEGORY_SEPARATOR.join(selected_path)
-                mask_cat = (
-                    (filtered_df['分類'] == target_path_str) | 
-                    (filtered_df['分類'].str.startswith(target_path_str + CATEGORY_SEPARATOR))
-                )
-                filtered_df = filtered_df[mask_cat]
-            
-            if search_key:
-                mask = (
-                    filtered_df['商品名稱'].str.contains(search_key, case=False) |
-                    filtered_df['廠商'].str.contains(search_key, case=False) |
-                    filtered_df['分類'].str.contains(search_key, case=False)
-                )
-                filtered_df = filtered_df[mask]
-            
-            prod_list = filtered_df['商品名稱'].unique().tolist()
-            
-            if prod_list:
-                edit_name = st.selectbox(f"📋 選擇商品 (共 {len(prod_list)} 筆)", prod_list, key="edit_sel")
-                curr = df[df['商品名稱'] == str(edit_name)].iloc[-1]
-                
-                st.divider()
-                with st.form("edit_form"):
-                    st.write("📦 **核心資料 (可修改名稱)**")
-                    n_name = st.text_input("商品名稱", value=str(edit_name))
-                    
-                    st.write("📂 **分類與廠商**")
-                    c_a, c_b = st.columns(2)
-                    n_cat = c_a.text_input("分類名稱", value=str(curr.get('分類', '未分類')))
-                    n_supp = c_b.text_input("廠商名稱", value=str(curr.get('廠商', '')))
-                    
-                    c1, c2 = st.columns(2)
-                    n_qty = c1.number_input("庫存", 0, value=int(curr['數量']))
-                    n_price = c2.number_input("單價", 0, value=int(curr['單價']))
-                    n_rem = st.text_area("備註", value=str(curr.get('備註','')))
-                    
-                    st.write("📸 **圖片管理**")
-                    raw_urls = str(curr.get('圖片連結','')).strip()
-                    if raw_urls:
-                        st.image([u.strip() for u in raw_urls.split(',') if u.strip()], width=100)
-                    n_url_str = st.text_area("圖片連結", value=raw_urls)
-                    n_files = st.file_uploader("新增圖片", type=['png','jpg'], accept_multiple_files=True)
-                    
-                    if st.form_submit_button("儲存變更", type="primary"):
-                        final_str = n_url_str
-                        if n_files:
-                            new_urls = []
-                            with st.spinner("上傳中..."):
-                                for f in n_files:
-                                    u = upload_image_to_imgbb(f)
-                                    if u: new_urls.append(u)
-                            if new_urls:
-                                if final_str.strip(): final_str += "," + ",".join(new_urls)
-                                else: final_str = ",".join(new_urls)
-                        
-                        with st.spinner("更新中..."):
-                            update_product_info(edit_name, n_name, n_qty, n_price, final_str, n_rem, n_cat, n_supp)
-                            st.rerun()
-            else:
-                st.warning("⚠️ 沒有符合條件的商品，請調整篩選條件。")
-        else:
-            st.info("無資料")
-
-# Tab 6: 廠商名錄
-with tab6:
-    st.header("🏭 廠商通訊錄")
-    if not st.session_state["is_admin"]:
-        show_login_block()
-    else:
-        v_df = get_vendors_df()
-        if not v_df.empty:
-            for col in v_df.columns:
-                v_df[col] = v_df[col].astype(str)
-            st.dataframe(
-                v_df,
-                use_container_width=True,
-                column_config={
-                    "廠商名稱": st.column_config.TextColumn("廠商名稱", width="medium"),
-                    "電話": st.column_config.TextColumn("電話", width="small"),
-                }
-            )
-        else:
-            st.info("目前無廠商資料。")
-        
-        st.divider()
-        
-        t6_add, t6_edit, t6_del = st.tabs(["➕ 新增", "✏️ 編輯", "❌ 刪除"])
-        
-        with t6_add:
-            st.subheader("新增廠商")
-            with st.form("add_vendor_form"):
-                v_name = st.text_input("廠商名稱 (必填)")
-                v_contact = st.text_input("聯絡人")
-                v_phone = st.text_input("電話")
-                v_addr = st.text_input("地址")
-                v_rem = st.text_area("備註")
-                
-                submitted = st.form_submit_button("確認新增", type="primary")
-                if submitted:
-                    if v_name:
-                        current_vendors = v_df['廠商名稱'].tolist() if not v_df.empty else []
-                        if v_name in current_vendors:
-                            st.error(f"❌ 廠商 '{v_name}' 已存在！")
-                        else:
-                            add_vendor(v_name, v_contact, v_phone, v_addr, v_rem)
-                            st.rerun()
-                    else:
-                        st.warning("請輸入名稱")
-
-        with t6_edit:
-            st.subheader("編輯廠商資料")
-            if not v_df.empty:
-                edit_v_name = st.selectbox("選擇編輯對象", v_df['廠商名稱'].unique(), key="edit_v_sel")
-                v_data = v_df[v_df['廠商名稱'] == edit_v_name].iloc[0]
-                
-                with st.form("edit_vendor_form"):
-                    st.info(f"正在編輯：**{edit_v_name}**")
-                    ev_contact = st.text_input("聯絡人", value=v_data.get('聯絡人', ''))
-                    ev_phone = st.text_input("電話", value=v_data.get('電話', ''))
-                    ev_addr = st.text_input("地址", value=v_data.get('地址', ''))
-                    ev_rem = st.text_area("備註", value=v_data.get('備註', ''))
-                    
-                    if st.form_submit_button("儲存修改", type="primary"):
-                        with st.spinner("更新中..."):
-                            update_vendor(edit_v_name, ev_contact, ev_phone, ev_addr, ev_rem)
-                            st.rerun()
-            else:
-                st.info("無廠商可編輯")
-
-        with t6_del:
-            st.subheader("刪除廠商")
-            if not v_df.empty:
-                del_v_name = st.selectbox("選擇刪除對象", v_df['廠商名稱'].unique(), key="del_v_sel")
-                if st.button("確認刪除", type="primary", key="del_v_btn"):
-                    delete_vendor(del_v_name)
-                    st.rerun()
-            else:
-                st.info("無廠商可刪除")
+                        prefix = CATEGORY_SEPARATOR.join(s
