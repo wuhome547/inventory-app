@@ -9,7 +9,8 @@ import re
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
 IMGBB_API_KEY = "請將您的 ImgBB API Key 貼在這裡" 
-CATEGORY_SEPARATOR = " > " # 重要：這是層級分隔符號
+# ⚠️ 重要：這是層級分隔符號，請確保與您輸入的一致
+CATEGORY_SEPARATOR = " > " 
 
 # --- 連線設定 ---
 @st.cache_resource(ttl=600)
@@ -94,24 +95,16 @@ def get_inventory_df():
     if sheet:
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
-        
-        # 🛡️ 強力清洗：先全部轉字串，避免數字型態干擾
-        for col in df.columns:
-            df[col] = df[col].astype(str).str.strip()
-            
-        # 確保必要欄位存在
+        if '商品名稱' in df.columns: df['商品名稱'] = df['商品名稱'].astype(str).str.strip()
         if '圖片連結' not in df.columns: df['圖片連結'] = ""
         if '備註' not in df.columns: df['備註'] = ""
         if '分類' not in df.columns: df['分類'] = "未分類"
         if '廠商' not in df.columns: df['廠商'] = ""
         
-        # 標準化分類格式
-        df['分類'] = df['分類'].replace(r'\s*>\s*', CATEGORY_SEPARATOR, regex=True)
-        
-        # 處理空值
-        df['分類'] = df['分類'].replace(['', 'nan', 'None'], '未分類')
-        df['廠商'] = df['廠商'].replace(['nan', 'None'], '')
-        
+        # 強制標準化：確保分隔符號前後有空白，這樣 split 才準
+        df['分類'] = df['分類'].astype(str).replace(r'\s*>\s*', CATEGORY_SEPARATOR, regex=True)
+        df['分類'] = df['分類'].replace('', '未分類').replace('nan', '未分類')
+        df['廠商'] = df['廠商'].astype(str).replace('nan', '')
         return df
     return pd.DataFrame()
 
@@ -145,6 +138,7 @@ def add_product(name, quantity, price, image_urls, remarks, category, supplier):
     if not sheet: return
     name_str = str(name).strip()
     
+    # 寫入時也標準化
     cat_str = str(category).strip()
     cat_str = re.sub(r'\s*>\s*', CATEGORY_SEPARATOR, cat_str)
     if not cat_str: cat_str = "未分類"
@@ -293,14 +287,14 @@ with tab1:
     
     if not df.empty:
         total_items = len(df)
-        total_qty = pd.to_numeric(df['數量'], errors='coerce').fillna(0).astype(int).sum()
-        total_value = (pd.to_numeric(df['數量'], errors='coerce').fillna(0) * pd.to_numeric(df['單價'], errors='coerce').fillna(0)).sum()
+        total_qty = df['數量'].astype(int).sum()
+        total_value = (df['數量'].astype(int) * df['單價'].astype(int)).sum()
         limit = st.session_state["low_stock_limit"]
-        low_stock_df = df[pd.to_numeric(df['數量'], errors='coerce').fillna(0) < limit]
+        low_stock_df = df[df['數量'].astype(int) < limit]
         
         m1, m2, m3 = st.columns(3)
         m1.metric("📦 商品總數", f"{total_items} 款", f"庫存 {total_qty}")
-        m2.metric("💰 總市值", f"${total_value:,.0f}")
+        m2.metric("💰 總市值", f"${total_value:,}")
         m3.metric(f"⚠️ 缺貨 (<{limit})", f"{len(low_stock_df)} 款", delta_color="inverse")
         if not low_stock_df.empty:
             with st.expander(f"🚨 查看 {len(low_stock_df)} 款缺貨商品"):
@@ -311,42 +305,50 @@ with tab1:
         c_nav, c_search, c_refresh = st.columns([3, 2, 1])
         
         with c_nav:
-            # 🛡️ Token-based 無限層級篩選 (加強版)
+            # 🔥 關鍵修正：逐層過濾 (Layer-by-Layer)
+            # 1. 取得所有分類清單
             subset_cats = sorted(df['分類'].unique().tolist())
-            selected_path = []
-            level = 0
+            selected_path = [] # 記錄使用者選了什麼: ['鞋子', '男鞋']
             
+            level = 0
             while True:
-                # 找出目前層級可用的 Token
+                # 2. 找出「在目前已選路徑下」的「下一層候選人」
                 candidates = set()
                 for c in subset_cats:
                     parts = str(c).split(CATEGORY_SEPARATOR)
+                    # 如果這個分類的層數夠深 (比 level 多)
                     if len(parts) > level:
-                        candidates.add(parts[level].strip()) # strip 很重要
+                        candidates.add(parts[level].strip())
                 
-                if not candidates: break
+                # 如果沒有候選人了，代表已經選到底了
+                if not candidates:
+                    break
                 
-                unique_candidates = sorted(list(candidates))
+                # 3. 顯示選單
+                options = ["(全部顯示)"] + sorted(list(candidates))
                 
-                options = ["(全部顯示)"] + unique_candidates
+                # 第一層預設選「未分類」
                 default_idx = 0
                 if level == 0 and "未分類" in options: default_idx = options.index("未分類")
                 
-                label = "📂 選擇主分類" if level == 0 else f"📂 第 {level+1} 層子分類"
-                selection = st.selectbox(label, options, index=default_idx, key=f"cat_lvl_{level}")
+                label = "📂 選擇主分類" if level == 0 else f"📂 子分類 ({level})"
+                selection = st.selectbox(label, options, index=default_idx, key=f"t1_nav_{level}")
                 
                 if selection == "(全部顯示)":
                     break
                 else:
                     selected_path.append(selection)
-                    # 過濾 subset，讓下一圈只處理符合的商品
+                    level += 1
+                    
+                    # 4. 關鍵步驟：把不符合這次選擇的分類踢掉！
+                    # 這樣下一圈迴圈時，candidates 只會剩下符合目前路徑的子分類
                     new_subset = []
                     for c in subset_cats:
                         parts = str(c).split(CATEGORY_SEPARATOR)
-                        if len(parts) > level and parts[level].strip() == selection:
+                        # 保留條件：層數夠深，且這一層的名稱等於選擇的名稱
+                        if len(parts) >= level and parts[level-1].strip() == selection:
                             new_subset.append(c)
                     subset_cats = new_subset
-                    level += 1
 
         with c_search:
             search_query = st.text_input("🔍 關鍵字搜尋", placeholder="名稱、分類或廠商...")
@@ -357,8 +359,8 @@ with tab1:
 
         df_display = df.copy()
         
+        # 分類篩選
         if selected_path:
-            # 組合目標路徑
             target_path_str = CATEGORY_SEPARATOR.join(selected_path)
             mask_cat = (
                 (df_display['分類'] == target_path_str) | 
@@ -442,104 +444,4 @@ with tab2:
                 new_sub_cat = st.text_input(
                     "建立新分類 / 子分類", 
                     placeholder="例如：鞋子 > 男鞋 > 皮鞋",
-                    help="💡 萬能欄位：\n1. 輸入「鞋子」建立新根目錄\n2. 輸入「鞋子 > 男鞋」建立多層目錄\n3. 若左側已選分類，這裡輸入的名稱會自動變成子分類。"
-                )
-
-            st.write("📦 **基本資料**")
-            p_name = st.text_input("商品名稱 (ID) - 必填")
-            
-            st.write("🏭 **廠商設定**")
-            vendor_options = ["(無 / 輸入新廠商)"] + existing_vendors
-            c_v1, c_v2 = st.columns([1, 1])
-            with c_v1:
-                sel_vendor = st.selectbox("選擇現有廠商", vendor_options)
-            with c_v2:
-                new_vendor = st.text_input("或輸入新廠商", placeholder="填寫此欄優先使用")
-            
-            c1, c2 = st.columns(2)
-            p_qty = c1.number_input("數量", 1, value=10)
-            p_price = c2.number_input("單價", 0, value=100)
-            p_remarks = st.text_area("備註")
-            
-            st.write("📸 **圖片**")
-            p_files = st.file_uploader("上傳 (可多選)", type=['png','jpg','jpeg'], accept_multiple_files=True)
-            p_url = st.text_input("或貼上連結 (逗號隔開)")
-
-            if st.form_submit_button("確認進貨", type="primary"):
-                if p_name:
-                    clean_input = new_sub_cat.strip()
-                    if sel_cat_parent == "(無 / 建立新根目錄)":
-                        final_cat = clean_input if clean_input else "未分類"
-                    else:
-                        final_cat = f"{sel_cat_parent}{CATEGORY_SEPARATOR}{clean_input}" if clean_input else sel_cat_parent
-                    
-                    final_cat = re.sub(r'\s*>\s*', ' > ', final_cat)
-                    
-                    final_supp = ""
-                    if new_vendor.strip(): final_supp = new_vendor.strip()
-                    elif sel_vendor != "(無 / 輸入新廠商)": final_supp = sel_vendor
-
-                    urls = []
-                    if p_url: urls.extend([u.strip() for u in p_url.split(',') if u.strip()])
-                    if p_files:
-                        with st.spinner("上傳中..."):
-                            for f in p_files:
-                                u = upload_image_to_imgbb(f)
-                                if u: urls.append(u)
-                    
-                    with st.spinner("寫入資料庫..."):
-                        add_product(p_name, p_qty, p_price, urls, p_remarks, final_cat, final_supp)
-                else:
-                    st.warning("請輸入名稱")
-
-# Tab 3: 銷貨
-with tab3:
-    st.header("商品銷貨")
-    if not st.session_state["is_admin"]:
-        show_login_block()
-    else:
-        df = get_inventory_df()
-        if not df.empty:
-            all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
-            filter_cat = st.selectbox("先選擇分類 (可加速尋找)", all_cats, key="sell_filter")
-            
-            if filter_cat != "全部": filtered_df = df[df['分類'].str.startswith(filter_cat)]
-            else: filtered_df = df
-            prod_list = filtered_df['商品名稱'].unique().tolist()
-            
-            if prod_list:
-                with st.form("sell_form"):
-                    s_name = st.selectbox("選擇商品", prod_list)
-                    s_qty = st.number_input("數量", 1)
-                    if st.form_submit_button("確認銷貨", type="primary"):
-                        sell_product(s_name, s_qty)
-            else:
-                st.warning("此分類下無商品")
-        else:
-            st.warning("無庫存")
-
-# Tab 4: 刪除
-with tab4:
-    st.header("刪除商品")
-    if not st.session_state["is_admin"]:
-        show_login_block()
-    else:
-        df = get_inventory_df()
-        if not df.empty:
-            if "del_mode" not in st.session_state: st.session_state["del_mode"] = False
-            all_cats = ["全部"] + sorted(df['分類'].unique().tolist())
-            filter_cat = st.selectbox("篩選分類", all_cats, key="del_filter", disabled=st.session_state["del_mode"])
-            
-            if filter_cat != "全部": filtered_df = df[df['分類'].str.startswith(filter_cat)]
-            else: filtered_df = df
-            prod_list = filtered_df['商品名稱'].unique().tolist()
-
-            c1, c2 = st.columns([3, 1])
-            with c1:
-                d_name = st.selectbox("選擇商品", prod_list, disabled=st.session_state["del_mode"], key="del_sel")
-            with c2:
-                st.write(""); st.write("")
-                if st.button("🗑️ 刪除", type="primary", disabled=st.session_state["del_mode"]):
-                    st.session_state["del_mode"] = True
-                    st.session_state["del_target"] = d_name
-     
+                    help="💡 萬能欄位：\n1
