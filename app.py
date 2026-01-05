@@ -100,7 +100,7 @@ def get_inventory_df():
         if '分類' not in df.columns: df['分類'] = "未分類"
         if '廠商' not in df.columns: df['廠商'] = ""
         
-        # 標準化：支援全形＞與半形>，並統一轉為 " > "
+        # 強制清洗與標準化
         df['分類'] = df['分類'].astype(str).replace(r'\s*[>＞]\s*', CATEGORY_SEPARATOR, regex=True)
         df['分類'] = df['分類'].replace('', '未分類').replace('nan', '未分類')
         df['廠商'] = df['廠商'].astype(str).replace('nan', '')
@@ -304,23 +304,32 @@ with tab1:
         c_nav, c_search, c_refresh = st.columns([3, 2, 1])
         
         with c_nav:
-            # 🔥 關鍵修正：拆解時每一段都強力去空白 (strip)
-            # 這樣 [' 鞋子 ', '男鞋'] 就會變成 ['鞋子', '男鞋']，比對才會準
-            all_cat_paths = [[p.strip() for p in str(c).split(CATEGORY_SEPARATOR)] for c in df['分類'].unique().tolist()]
-            selected_path = [] 
+            # 🔥 終極修正：使用「全列表比對法」確保無限層級
+            # 先將所有分類切割成 List： ['鞋子', '男鞋', '運動鞋']
+            all_cat_chains = [str(c).split(CATEGORY_SEPARATOR) for c in df['分類'].unique().tolist()]
             
+            selected_path = [] # 儲存使用者已選的路徑
             level = 0
+            
             while True:
-                candidates = set()
-                for path in all_cat_paths:
-                    if len(path) > level:
-                        # 檢查目前路徑的前綴是否吻合
-                        if path[:level] == selected_path:
-                            candidates.add(path[level])
+                # 找出「符合當前已選路徑」的下一層候選人
+                next_level_candidates = set()
                 
-                if not candidates: break
+                for chain in all_cat_chains:
+                    # 1. 檢查這條路徑長度是否夠深 (大於當前 level)
+                    # 2. 檢查這條路徑的前面部分，是否跟使用者選的一樣 (selected_path)
+                    if len(chain) > level:
+                        # 檢查前綴是否吻合
+                        # 例如 selected_path=['鞋子'], chain=['鞋子', '男鞋'] -> chain[:1] == ['鞋子'] -> 吻合
+                        if chain[:level] == selected_path:
+                            next_level_candidates.add(chain[level].strip())
                 
-                options = ["(全部顯示)"] + sorted(list(candidates))
+                # 如果沒有候選人了，結束迴圈
+                if not next_level_candidates:
+                    break
+                
+                # 顯示選單
+                options = ["(全部顯示)"] + sorted(list(next_level_candidates))
                 
                 default_idx = 0
                 if level == 0 and "未分類" in options: default_idx = options.index("未分類")
@@ -329,7 +338,7 @@ with tab1:
                 selection = st.selectbox(label, options, index=default_idx, key=f"t1_cat_{level}")
                 
                 if selection == "(全部顯示)":
-                    break
+                    break # 使用者不想再往下選了
                 else:
                     selected_path.append(selection)
                     level += 1
@@ -344,6 +353,7 @@ with tab1:
         df_display = df.copy()
         
         if selected_path:
+            # 組合目標路徑
             target_path_str = CATEGORY_SEPARATOR.join(selected_path)
             mask_cat = (
                 (df_display['分類'] == target_path_str) | 
@@ -553,24 +563,25 @@ with tab5:
             c_nav, c_search = st.columns([2, 1])
             
             with c_nav:
-                # 🔥 這裡也同步修正
-                all_cat_paths = [[p.strip() for p in str(c).split(CATEGORY_SEPARATOR)] for c in df['分類'].unique().tolist()]
+                # 🔥 Tab 5 也套用相同的列表切片邏輯
+                all_cat_chains = [str(c).split(CATEGORY_SEPARATOR) for c in df['分類'].unique().tolist()]
                 selected_path = []
                 level = 0
+                
                 while True:
-                    candidates = set()
-                    for path in all_cat_paths:
-                        if len(path) > level:
-                            if path[:level] == selected_path:
-                                candidates.add(path[level])
+                    next_level_candidates = set()
+                    for chain in all_cat_chains:
+                        if len(chain) > level:
+                            if chain[:level] == selected_path:
+                                next_level_candidates.add(chain[level].strip())
                     
-                    if not candidates: break
+                    if not next_level_candidates: break
                     
-                    options = ["(全部顯示)"] + sorted(list(candidates))
+                    options = ["(全部顯示)"] + sorted(list(next_level_candidates))
                     default_idx = 0
                     if level == 0 and "未分類" in options: default_idx = options.index("未分類")
                     
-                    label = "📂 主分類" if level == 0 else f"📂 子分類 {level}"
+                    label = "📂 主分類" if level == 0 else f"📂 子分類 ({level})"
                     selection = st.selectbox(label, options, index=default_idx, key=f"edit_cat_{level}")
                     
                     if selection == "(全部顯示)":
@@ -671,4 +682,57 @@ with tab6:
         else:
             st.info("目前無廠商資料。")
         
-        st.
+        st.divider()
+        
+        t6_add, t6_edit, t6_del = st.tabs(["➕ 新增", "✏️ 編輯", "❌ 刪除"])
+        
+        with t6_add:
+            st.subheader("新增廠商")
+            with st.form("add_vendor_form"):
+                v_name = st.text_input("廠商名稱 (必填)")
+                v_contact = st.text_input("聯絡人")
+                v_phone = st.text_input("電話")
+                v_addr = st.text_input("地址")
+                v_rem = st.text_area("備註")
+                
+                submitted = st.form_submit_button("確認新增", type="primary")
+                if submitted:
+                    if v_name:
+                        current_vendors = v_df['廠商名稱'].tolist() if not v_df.empty else []
+                        if v_name in current_vendors:
+                            st.error(f"❌ 廠商 '{v_name}' 已存在！")
+                        else:
+                            add_vendor(v_name, v_contact, v_phone, v_addr, v_rem)
+                            st.rerun()
+                    else:
+                        st.warning("請輸入名稱")
+
+        with t6_edit:
+            st.subheader("編輯廠商資料")
+            if not v_df.empty:
+                edit_v_name = st.selectbox("選擇編輯對象", v_df['廠商名稱'].unique(), key="edit_v_sel")
+                v_data = v_df[v_df['廠商名稱'] == edit_v_name].iloc[0]
+                
+                with st.form("edit_vendor_form"):
+                    st.info(f"正在編輯：**{edit_v_name}**")
+                    ev_contact = st.text_input("聯絡人", value=v_data.get('聯絡人', ''))
+                    ev_phone = st.text_input("電話", value=v_data.get('電話', ''))
+                    ev_addr = st.text_input("地址", value=v_data.get('地址', ''))
+                    ev_rem = st.text_area("備註", value=v_data.get('備註', ''))
+                    
+                    if st.form_submit_button("儲存修改", type="primary"):
+                        with st.spinner("更新中..."):
+                            update_vendor(edit_v_name, ev_contact, ev_phone, ev_addr, ev_rem)
+                            st.rerun()
+            else:
+                st.info("無廠商可編輯")
+
+        with t6_del:
+            st.subheader("刪除廠商")
+            if not v_df.empty:
+                del_v_name = st.selectbox("選擇刪除對象", v_df['廠商名稱'].unique(), key="del_v_sel")
+                if st.button("確認刪除", type="primary", key="del_v_btn"):
+                    delete_vendor(del_v_name)
+                    st.rerun()
+            else:
+                st.info("無廠商可刪除")
