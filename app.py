@@ -7,7 +7,7 @@ import base64
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
-IMGBB_API_KEY = "請將您的 ImgBB API Key 貼在這裡" 
+IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b" 
 CATEGORY_SEPARATOR = " > "
 
 # --- 連線設定 ---
@@ -299,6 +299,7 @@ with tab1:
             
             level = 0
             while True:
+                # 找出目前層級可用的選項
                 if level == 0:
                     candidates = [c.split(CATEGORY_SEPARATOR)[0] for c in current_cats]
                 else:
@@ -307,10 +308,14 @@ with tab1:
                     for c in current_cats:
                         if c.startswith(prefix):
                             remainder = c[len(prefix):]
-                            if remainder: candidates.append(remainder.split(CATEGORY_SEPARATOR)[0])
+                            if remainder:
+                                candidates.append(remainder.split(CATEGORY_SEPARATOR)[0])
                 
                 unique_candidates = sorted(list(set(candidates)))
-                if not unique_candidates: break
+                
+                # 如果沒有候選人了，就停止
+                if not unique_candidates:
+                    break
                 
                 options = ["(全部顯示)"] + unique_candidates
                 default_idx = 0
@@ -319,13 +324,14 @@ with tab1:
                 label = "📂 選擇主分類" if level == 0 else f"📂 第 {level+1} 層子分類"
                 selection = st.selectbox(label, options, index=default_idx, key=f"cat_lvl_{level}")
                 
-                if selection == "(全部顯示)": break
+                if selection == "(全部顯示)":
+                    break
                 else:
                     selected_path.append(selection)
                     level += 1
-                    current_full_path = CATEGORY_SEPARATOR.join(selected_path)
-                    has_deeper = any(c.startswith(current_full_path + CATEGORY_SEPARATOR) for c in current_cats)
-                    if not has_deeper: break
+                    # ⚠️ 修正：移除這裡的 has_deeper 檢查
+                    # 直接讓迴圈跑下一次，如果沒有 candidates 了，會在上面的 if not unique_candidates 處自然停止。
+                    # 這樣就不會誤判。
 
         with c_search:
             search_query = st.text_input("🔍 關鍵字搜尋", placeholder="名稱、分類或廠商...")
@@ -532,7 +538,7 @@ with tab4:
                         st.session_state["del_mode"] = False
                         st.rerun()
 
-# Tab 5: 編輯 (支援無限層級 + 關鍵字)
+# Tab 5: 編輯
 with tab5:
     st.header("✏️ 編輯資料")
     if not st.session_state["is_admin"]:
@@ -540,8 +546,6 @@ with tab5:
     else:
         df = get_inventory_df()
         if not df.empty:
-            
-            # --- 1. 無限層級篩選器 ---
             st.write("🔍 **快速篩選 (先選分類，或直接搜尋)**")
             c_nav, c_search = st.columns([2, 1])
             
@@ -574,18 +578,15 @@ with tab5:
                     else:
                         selected_path.append(selection)
                         level += 1
-                        current_full_path = CATEGORY_SEPARATOR.join(selected_path)
-                        has_deeper = any(c.startswith(current_full_path + CATEGORY_SEPARATOR) for c in current_cats)
-                        if not has_deeper: break
+                        # ⚠️ 修正：同樣移除 has_deeper
 
             with c_search:
                 st.write("") # 排版用
                 search_key = st.text_input("🔍 關鍵字搜尋", key="edit_search_key")
 
-            # --- 2. 執行過濾 ---
+            # --- 篩選邏輯 ---
             filtered_df = df.copy()
             
-            # 分類過濾
             if selected_path:
                 target_path_str = CATEGORY_SEPARATOR.join(selected_path)
                 mask_cat = (
@@ -594,7 +595,6 @@ with tab5:
                 )
                 filtered_df = filtered_df[mask_cat]
             
-            # 關鍵字過濾
             if search_key:
                 mask = (
                     filtered_df['商品名稱'].str.contains(search_key, case=False) |
@@ -605,7 +605,6 @@ with tab5:
             
             prod_list = filtered_df['商品名稱'].unique().tolist()
             
-            # --- 3. 顯示選擇結果 ---
             if prod_list:
                 edit_name = st.selectbox(f"📋 選擇商品 (共 {len(prod_list)} 筆)", prod_list, key="edit_sel")
                 curr = df[df['商品名稱'] == str(edit_name)].iloc[-1]
