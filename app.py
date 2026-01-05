@@ -4,6 +4,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import requests
 import base64
+import re # 引入正則表達式，處理不規則的 > 符號
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
@@ -86,20 +87,27 @@ def show_login_block():
     st.info("請使用左側欄位輸入密碼登入。")
     st.stop()
 
-# --- 核心功能 ---
+# --- 核心功能 (加入強力資料清洗) ---
 
 def get_inventory_df():
     sheet = get_worksheet("sheet1")
     if sheet:
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
+        
+        # 1. 基礎清洗
         if '商品名稱' in df.columns: df['商品名稱'] = df['商品名稱'].astype(str).str.strip()
         if '圖片連結' not in df.columns: df['圖片連結'] = ""
         if '備註' not in df.columns: df['備註'] = ""
         if '分類' not in df.columns: df['分類'] = "未分類"
         if '廠商' not in df.columns: df['廠商'] = ""
         
-        df['分類'] = df['分類'].astype(str).replace('', '未分類').replace('nan', '未分類')
+        # 2. 🔥 關鍵修正：標準化分類格式
+        # 把所有 " >", "> ", ">" 全部替換成標準的 " > "
+        # 這樣無限層級篩選器就能正確切割字串了
+        df['分類'] = df['分類'].astype(str).replace(r'\s*>\s*', ' > ', regex=True)
+        df['分類'] = df['分類'].replace('', '未分類').replace('nan', '未分類')
+        
         df['廠商'] = df['廠商'].astype(str).replace('nan', '')
         return df
     return pd.DataFrame()
@@ -133,8 +141,12 @@ def add_product(name, quantity, price, image_urls, remarks, category, supplier):
     sheet = get_worksheet("sheet1")
     if not sheet: return
     name_str = str(name).strip()
+    
+    # 寫入時也做一次標準化，確保資料庫整齊
     cat_str = str(category).strip()
+    cat_str = re.sub(r'\s*>\s*', ' > ', cat_str) # 標準化
     if not cat_str: cat_str = "未分類"
+    
     supp_str = str(supplier).strip()
     sync_vendor_if_new(supp_str)
     
@@ -185,6 +197,10 @@ def update_product_info(old_name, new_name, new_qty, new_price, new_url_str, new
     if not sheet: return
     clean_url_str = str(new_url_str).strip()
     if len(clean_url_str) > 4000: st.error("❌ 連結太長"); return
+    
+    # 寫入時標準化
+    cat_clean = re.sub(r'\s*>\s*', ' > ', str(new_cat).strip())
+    
     sync_vendor_if_new(new_supp)
     cell = find_product_cell(sheet, old_name)
     if cell:
@@ -193,7 +209,7 @@ def update_product_info(old_name, new_name, new_qty, new_price, new_url_str, new
         sheet.update_cell(cell.row, 3, new_price)
         sheet.update_cell(cell.row, 4, clean_url_str)
         sheet.update_cell(cell.row, 5, new_remarks)
-        sheet.update_cell(cell.row, 6, new_cat)
+        sheet.update_cell(cell.row, 6, cat_clean)
         sheet.update_cell(cell.row, 7, new_supp)
         st.success(f"✅ 更新成功！")
     else:
@@ -294,12 +310,12 @@ with tab1:
         c_nav, c_search, c_refresh = st.columns([3, 2, 1])
         
         with c_nav:
+            # 取得所有分類 (已經過清洗)
             current_cats = sorted(df['分類'].unique().tolist())
             selected_path = []
             
             level = 0
             while True:
-                # 找出目前層級可用的選項
                 if level == 0:
                     candidates = [c.split(CATEGORY_SEPARATOR)[0] for c in current_cats]
                 else:
@@ -313,7 +329,6 @@ with tab1:
                 
                 unique_candidates = sorted(list(set(candidates)))
                 
-                # 如果沒有候選人了，就停止
                 if not unique_candidates:
                     break
                 
@@ -329,9 +344,6 @@ with tab1:
                 else:
                     selected_path.append(selection)
                     level += 1
-                    # ⚠️ 修正：移除這裡的 has_deeper 檢查
-                    # 直接讓迴圈跑下一次，如果沒有 candidates 了，會在上面的 if not unique_candidates 處自然停止。
-                    # 這樣就不會誤判。
 
         with c_search:
             search_query = st.text_input("🔍 關鍵字搜尋", placeholder="名稱、分類或廠商...")
@@ -457,6 +469,9 @@ with tab2:
                     else:
                         final_cat = f"{sel_cat_parent}{CATEGORY_SEPARATOR}{clean_input}" if clean_input else sel_cat_parent
                     
+                    # 確保寫入前也是乾淨的格式
+                    final_cat = re.sub(r'\s*>\s*', ' > ', final_cat)
+                    
                     final_supp = ""
                     if new_vendor.strip(): final_supp = new_vendor.strip()
                     elif sel_vendor != "(無 / 輸入新廠商)": final_supp = sel_vendor
@@ -578,7 +593,6 @@ with tab5:
                     else:
                         selected_path.append(selection)
                         level += 1
-                        # ⚠️ 修正：同樣移除 has_deeper
 
             with c_search:
                 st.write("") # 排版用
