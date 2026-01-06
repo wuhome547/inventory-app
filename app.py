@@ -5,6 +5,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import requests
 import base64
 import re
+import time # 引入 time 模組
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
@@ -24,6 +25,7 @@ def get_gspread_client():
         st.error(f"❌ Google 登入失敗: {e}")
         return None
 
+@st.cache_resource(ttl=600) # 將 get_worksheet 也進行緩存
 def get_worksheet(sheet_name="sheet1"):
     client = get_gspread_client()
     if not client: return None
@@ -42,8 +44,9 @@ def get_worksheet(sheet_name="sheet1"):
                 return new_ws
             except: return None
         return None
-    except Exception:
-        st.cache_resource.clear()
+    except Exception as e: # 捕獲所有異常並清除緩存
+        st.error(f"❌ 取得工作表失敗: {e}")
+        st.cache_resource.clear() # 確保在獲取工作表失敗時也清除緩存
         return None
 
 # --- ImgBB 上傳 ---
@@ -187,6 +190,7 @@ def delete_product(name):
         sheet.delete_rows(cell.row)
         st.success(f"🗑️ 已刪除")
         st.cache_resource.clear() # Clear cache after product deletion
+        # time.sleep(0.5) # 可選：如果問題仍存在，可嘗試在此處加入短暫延遲
     else:
         st.error(f"❌ 找不到商品")
 
