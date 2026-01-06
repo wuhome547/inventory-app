@@ -724,4 +724,50 @@ with tab6:
         with t6_add:
             st.subheader("新增廠商")
             with st.form("add_vendor_form"):
-      
+                v_name = st.text_input("廠商名稱 (必填)")
+                v_contact = st.text_input("聯絡人")
+                v_phone = st.text_input("電話")
+                v_addr = st.text_input("地址")
+                v_rem = st.text_area("備註")
+
+                submitted = st.form_submit_button("確認新增", type="primary")
+                if submitted:
+                    if v_name:
+                        current_vendors = v_df['廠商名稱'].tolist() if not v_df.empty else []
+                        if v_name in current_vendors:
+                            st.error(f"❌ 廠商 '{v_name}' 已存在！")
+                        else:
+                            add_vendor(v_name, v_contact, v_phone, v_addr, v_rem)
+                            st.rerun()
+                    else:
+                        st.warning("請輸入名稱")
+
+        with t6_edit:
+            st.subheader("編輯廠商資料")
+            if not v_df.empty:
+                edit_v_name = st.selectbox("選擇編輯對象", v_df['廠商名稱'].unique(), key="edit_v_sel")
+                v_data = v_df[v_df['廠商名稱'] == edit_v_name].iloc[0]
+
+                with st.form("edit_vendor_form"):
+                    st.info(f"正在編輯：**{edit_v_name}**")
+                    ev_contact = st.text_input("聯絡人", value=v_data.get('聯絡人', ''))
+                    ev_phone = st.text_input("電話", value=v_data.get('電話', ''))
+                    ev_addr = st.text_input("地址", value=v_data.get('地址', ''))
+                    ev_rem = st.text_area("備註", value=v_data.get('備註', ''))
+
+                    if st.form_submit_button("儲存修改", type="primary"):
+                        with st.spinner("更新中..."):
+                            update_vendor(edit_v_name, ev_contact, ev_phone, ev_addr, ev_rem)
+                            st.rerun()
+            else:
+                st.info("無廠商可編輯")
+
+        with t6_del:
+            st.subheader("刪除廠商")
+            if not v_df.empty:
+                del_v_name = st.selectbox("選擇刪除對象", v_df['廠商名稱'].unique(), key="del_v_sel")
+                if st.button("確認刪除", type="primary", key="del_v_btn"):
+                    delete_vendor(del_v_name)
+                    st.rerun()
+            else:
+                st.info("無廠商可刪除")
