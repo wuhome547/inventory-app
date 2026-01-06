@@ -130,6 +130,7 @@ def sync_vendor_if_new(vendor_name):
         if v_name not in existing_vendors:
             ws.append_row([v_name, "", "", "", "由系統自動同步新增"])
             st.toast(f"✅ 已將 '{v_name}' 自動加入廠商通訊錄！")
+            st.cache_resource.clear() # Clear cache after vendor addition
     except: pass
 
 def add_product(name, quantity, price, image_urls, remarks, category, supplier):
@@ -160,6 +161,7 @@ def add_product(name, quantity, price, image_urls, remarks, category, supplier):
     else:
         sheet.append_row([name_str, quantity, price, final_url_str, remarks, cat_str, supp_str])
         st.success(f"🆕 新增 '{name_str}'")
+    st.cache_resource.clear() # Clear cache after product addition/update
 
 def sell_product(name, quantity):
     sheet = get_worksheet("sheet1")
@@ -171,6 +173,7 @@ def sell_product(name, quantity):
         if curr >= quantity:
             sheet.update_cell(cell.row, 2, curr - quantity)
             st.success(f"💰 售出 {quantity} 個")
+            st.cache_resource.clear() # Clear cache after product sale
         else:
             st.error("❌ 庫存不足")
     else:
@@ -183,6 +186,7 @@ def delete_product(name):
     if cell:
         sheet.delete_rows(cell.row)
         st.success(f"🗑️ 已刪除")
+        st.cache_resource.clear() # Clear cache after product deletion
     else:
         st.error(f"❌ 找不到商品")
 
@@ -205,6 +209,7 @@ def update_product_info(old_name, new_name, new_qty, new_price, new_url_str, new
         sheet.update_cell(cell.row, 6, cat_clean)
         sheet.update_cell(cell.row, 7, new_supp)
         st.success(f"✅ 更新成功！")
+        st.cache_resource.clear() # Clear cache after product info update
     else:
         st.error(f"❌ 找不到商品")
 
@@ -220,6 +225,7 @@ def add_vendor(name, contact, phone, address, remarks):
     try:
         sheet.append_row([name_str, contact, phone, address, remarks])
         st.success(f"🏭 已成功新增廠商：'{name_str}'")
+        st.cache_resource.clear() # Clear cache after vendor addition
     except Exception as e:
         st.error(f"新增失敗: {e}")
 
@@ -232,6 +238,7 @@ def delete_vendor(name):
         if target in vals:
             sheet.delete_rows(vals.index(target)+1)
             st.success("已刪除")
+            st.cache_resource.clear() # Clear cache after vendor deletion
     except: st.error("刪除失敗")
 
 def update_vendor(old_name, new_contact, new_phone, new_addr, new_rem):
@@ -247,6 +254,7 @@ def update_vendor(old_name, new_contact, new_phone, new_addr, new_rem):
             sheet.update_cell(row_idx, 4, new_addr)
             sheet.update_cell(row_idx, 5, new_rem)
             st.success(f"✅ 廠商 '{target}' 更新成功")
+            st.cache_resource.clear() # Clear cache after vendor update
         else:
             st.error("❌ 找不到該廠商")
     except Exception as e:
@@ -716,50 +724,4 @@ with tab6:
         with t6_add:
             st.subheader("新增廠商")
             with st.form("add_vendor_form"):
-                v_name = st.text_input("廠商名稱 (必填)")
-                v_contact = st.text_input("聯絡人")
-                v_phone = st.text_input("電話")
-                v_addr = st.text_input("地址")
-                v_rem = st.text_area("備註")
-
-                submitted = st.form_submit_button("確認新增", type="primary")
-                if submitted:
-                    if v_name:
-                        current_vendors = v_df['廠商名稱'].tolist() if not v_df.empty else []
-                        if v_name in current_vendors:
-                            st.error(f"❌ 廠商 '{v_name}' 已存在！")
-                        else:
-                            add_vendor(v_name, v_contact, v_phone, v_addr, v_rem)
-                            st.rerun()
-                    else:
-                        st.warning("請輸入名稱")
-
-        with t6_edit:
-            st.subheader("編輯廠商資料")
-            if not v_df.empty:
-                edit_v_name = st.selectbox("選擇編輯對象", v_df['廠商名稱'].unique(), key="edit_v_sel")
-                v_data = v_df[v_df['廠商名稱'] == edit_v_name].iloc[0]
-
-                with st.form("edit_vendor_form"):
-                    st.info(f"正在編輯：**{edit_v_name}**")
-                    ev_contact = st.text_input("聯絡人", value=v_data.get('聯絡人', ''))
-                    ev_phone = st.text_input("電話", value=v_data.get('電話', ''))
-                    ev_addr = st.text_input("地址", value=v_data.get('地址', ''))
-                    ev_rem = st.text_area("備註", value=v_data.get('備註', ''))
-
-                    if st.form_submit_button("儲存修改", type="primary"):
-                        with st.spinner("更新中..."):
-                            update_vendor(edit_v_name, ev_contact, ev_phone, ev_addr, ev_rem)
-                            st.rerun()
-            else:
-                st.info("無廠商可編輯")
-
-        with t6_del:
-            st.subheader("刪除廠商")
-            if not v_df.empty:
-                del_v_name = st.selectbox("選擇刪除對象", v_df['廠商名稱'].unique(), key="del_v_sel")
-                if st.button("確認刪除", type="primary", key="del_v_btn"):
-                    delete_vendor(del_v_name)
-                    st.rerun()
-            else:
-                st.info("無廠商可刪除")
+      
