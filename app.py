@@ -8,7 +8,7 @@ import re
 
 # --- 設定區 ---
 SPREADSHEET_NAME = "inventory_system"
-IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b" 
+IMGBB_API_KEY = "a9e1ead23aa6fb34478cf7a16adaf34b" # 您的 ImgBB API Key 已嵌入
 CATEGORY_SEPARATOR = " > " 
 
 # --- 連線設定 ---
@@ -82,10 +82,11 @@ def logout():
     st.session_state["is_admin"] = False
     st.rerun()
 
-def show_login_block():
+# 修正：只顯示警告，不停止整個程式，讓後面的 Tab 有機會執行
+def show_login_block_tab(): # 為了區分，改名為 show_login_block_tab
     st.warning("🔒 **此功能僅限管理員使用**")
     st.info("請使用左側欄位輸入密碼登入。")
-    st.stop()
+    # 這裡不加 st.stop()，讓程式碼可以繼續執行到下一個 Tab
 
 # --- 核心功能 ---
 
@@ -252,7 +253,7 @@ def update_vendor(old_name, new_contact, new_phone, new_addr, new_rem):
         st.error(f"更新失敗: {e}")
 
 # --- 介面設計 ---
-st.set_page_config(page_title="吉宏車業雲端進銷存系統", layout="wide") # 標題變更
+st.set_page_config(page_title="吉宏車業雲端進銷存系統", layout="wide")
 
 if "is_admin" not in st.session_state: st.session_state["is_admin"] = False
 if "low_stock_limit" not in st.session_state: st.session_state["low_stock_limit"] = 1
@@ -278,6 +279,8 @@ st.title("吉宏車業雲端進銷存系統") # 標題變更
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨 (限)", "➖ 銷貨 (限)", "❌ 刪除 (限)", "✏️ 編輯 (限)", "🏭 廠商名錄 (限)"])
 
 # --- 泛用型無限分層篩選器 UI 模組 ---
+# ⚠️ 這裡的 show_login_block() 已經拿掉了 st.stop()
+# 所以現在才能在 Tab 內直接呼叫，而不會讓整個程式停止
 def generate_category_filters(df_full, current_key_prefix):
     """
     生成無限層級的分類篩選器。
@@ -289,34 +292,32 @@ def generate_category_filters(df_full, current_key_prefix):
     selected_path = [] # 儲存使用者已選的路徑
     level = 0
     
-    filter_cols = st.columns(4) # 預設顯示 4 欄
-    
     while True:
         candidates = set()
         for chain in all_cat_chains:
             if len(chain) > level and chain[:level] == selected_path:
-                candidates.add(chain[level].strip())
+                candidates.add(chain[level].strip()) # 確保候選值也去空白
         
         if not candidates: break # 沒路了，結束
         
         options = ["(全部顯示)"] + sorted(list(candidates))
+        
         default_idx = 0
         if level == 0 and "未分類" in options: default_idx = options.index("未分類")
         
-        # 顯示選單
-        with filter_cols[level % 4]: # 讓選單在 4 欄內輪流顯示
-            label = "📂 選擇主分類" if level == 0 else f"📂 第 {level+1} 層子分類"
-            selection = st.selectbox(label, options, index=default_idx, key=f"{current_key_prefix}_cat_{level}")
+        label = "📂 選擇主分類" if level == 0 else f"📂 第 {level+1} 層子分類"
+        
+        selection = st.selectbox(label, options, index=default_idx, key=f"{current_key_prefix}_cat_{level}")
         
         if selection == "(全部顯示)":
-            break
+            break # 使用者不想再往下選了
         else:
             selected_path.append(selection)
             level += 1
-    
+            
     return selected_path
 
-# Tab 1: 庫存圖牆 (無限分層)
+# Tab 1: 庫存圖牆
 with tab1:
     st.header("庫存總覽")
     df = get_inventory_df()
@@ -338,9 +339,8 @@ with tab1:
         
         st.divider()
 
-        # 🔥 應用無限分層篩選器
         st.write("🔍 **分類篩選**")
-        selected_path = generate_category_filters(df, "t1_filter")
+        selected_path = generate_category_filters(df, "t1_filter") # 使用模組
 
         col_search, col_refresh = st.columns([5, 1])
         with col_search:
@@ -495,8 +495,7 @@ with tab3:
         df = get_inventory_df()
         if not df.empty:
             st.write("🔍 **分類篩選**")
-            # 🔥 應用無限分層篩選器
-            selected_path = generate_category_filters(df, "t3_filter")
+            selected_path = generate_category_filters(df, "t3_filter") # 使用模組
             
             # 根據篩選結果過濾商品
             filtered_df = df.copy()
@@ -529,8 +528,7 @@ with tab4:
             if "del_mode" not in st.session_state: st.session_state["del_mode"] = False
             
             st.write("🔍 **分類篩選**")
-            # 🔥 應用無限分層篩選器
-            selected_path_del = generate_category_filters(df, "t4_filter")
+            selected_path_del = generate_category_filters(df, "t4_filter") # 使用模組
             
             # 根據篩選結果過濾商品
             filtered_df = df.copy()
@@ -572,15 +570,17 @@ with tab5:
         df = get_inventory_df()
         if not df.empty:
             st.write("🔍 **快速篩選 (先選分類，或直接搜尋)**")
-            c_nav, c_search = st.columns([2, 1])
             
-            with c_nav:
-                # 🔥 應用無限分層篩選器
-                selected_path = generate_category_filters(df, "t5_filter")
+            # 🔥 應用無限分層篩選器
+            selected_path = generate_category_filters(df, "t5_filter")
 
-            with c_search:
-                st.write("") 
+            col_search, col_refresh_t5 = st.columns([5,1])
+            with col_search:
                 search_key = st.text_input("🔍 關鍵字搜尋", key="edit_search_key")
+            with col_refresh_t5:
+                st.write(""); st.write("")
+                if st.button("🔄 重新整理", key="refresh_edit_tab"): st.rerun() # 重新整理按鈕
+            
 
             # --- 篩選邏輯 ---
             filtered_df = df.copy()
@@ -698,7 +698,7 @@ with tab6:
         with t6_edit:
             st.subheader("編輯廠商資料")
             if not v_df.empty:
-                edit_v_name = st.selectbox("選擇編輯對象", v_df['廠商名稱'].unique(), key="edit_v_sel_vendor") # key 修正
+                edit_v_name = st.selectbox("選擇編輯對象", v_df['廠商名稱'].unique(), key="edit_v_sel_vendor") 
                 v_data = v_df[v_df['廠商名稱'] == edit_v_name].iloc[0]
                 
                 with st.form("edit_vendor_form"):
@@ -718,7 +718,7 @@ with tab6:
         with t6_del:
             st.subheader("刪除廠商")
             if not v_df.empty:
-                del_v_name = st.selectbox("選擇刪除對象", v_df['廠商名稱'].unique(), key="del_v_sel_vendor") # key 修正
+                del_v_name = st.selectbox("選擇刪除對象", v_df['廠商名稱'].unique(), key="del_v_sel_vendor") 
                 if st.button("確認刪除", type="primary", key="del_v_btn"):
                     delete_vendor(del_v_name)
                     st.rerun()
