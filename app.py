@@ -82,11 +82,7 @@ def logout():
     st.session_state["is_admin"] = False
     st.rerun()
 
-# 修正：只顯示警告，不停止整個程式，讓後面的 Tab 有機會執行
-def show_login_block_tab(): # 為了區分，改名為 show_login_block_tab
-    st.warning("🔒 **此功能僅限管理員使用**")
-    st.info("請使用左側欄位輸入密碼登入。")
-    # 這裡不加 st.stop()，讓程式碼可以繼續執行到下一個 Tab
+# 🔥 移除 show_login_block()，改用 if/else 結構
 
 # --- 核心功能 ---
 
@@ -279,8 +275,6 @@ st.title("吉宏車業雲端進銷存系統") # 標題變更
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨 (限)", "➖ 銷貨 (限)", "❌ 刪除 (限)", "✏️ 編輯 (限)", "🏭 廠商名錄 (限)"])
 
 # --- 泛用型無限分層篩選器 UI 模組 ---
-# ⚠️ 這裡的 show_login_block() 已經拿掉了 st.stop()
-# 所以現在才能在 Tab 內直接呼叫，而不會讓整個程式停止
 def generate_category_filters(df_full, current_key_prefix):
     """
     生成無限層級的分類篩選器。
@@ -288,7 +282,6 @@ def generate_category_filters(df_full, current_key_prefix):
     current_key_prefix: 用於 Streamlit key 的前綴 (確保唯一性)
     """
     all_cat_chains = [str(c).split(CATEGORY_SEPARATOR) for c in df_full['分類'].unique().tolist()]
-    
     selected_path = [] # 儲存使用者已選的路徑
     level = 0
     
@@ -586,10 +579,10 @@ with tab5:
             filtered_df = df.copy()
             
             if selected_path:
-                target_path_str = CATEGORY_SEPARATOR.join(selected_path)
+                target_str = CATEGORY_SEPARATOR.join(selected_path)
                 mask_cat = (
-                    (filtered_df['分類'] == target_path_str) | 
-                    (filtered_df['分類'].str.startswith(target_path_str + CATEGORY_SEPARATOR))
+                    (filtered_df['分類'] == target_str) | 
+                    (filtered_df['分類'].str.startswith(target_str + CATEGORY_SEPARATOR))
                 )
                 filtered_df = filtered_df[mask_cat]
             
@@ -649,7 +642,7 @@ with tab5:
         else:
             st.info("無資料")
 
-# Tab 6: 廠商名錄 (警告已修復)
+# Tab 6: 廠商名錄
 with tab6:
     st.header("🏭 廠商通訊錄")
     if not st.session_state["is_admin"]:
