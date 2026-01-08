@@ -82,7 +82,7 @@ def logout():
     st.session_state["is_admin"] = False
     st.rerun()
 
-# 🔥 移除 show_login_block()，改用 if/else 結構
+# 🔥 徹底移除 show_login_block() 函式，直接在 Tab 內使用 if/else 判斷
 
 # --- 核心功能 ---
 
@@ -282,6 +282,7 @@ def generate_category_filters(df_full, current_key_prefix):
     current_key_prefix: 用於 Streamlit key 的前綴 (確保唯一性)
     """
     all_cat_chains = [str(c).split(CATEGORY_SEPARATOR) for c in df_full['分類'].unique().tolist()]
+    
     selected_path = [] # 儲存使用者已選的路徑
     level = 0
     
@@ -411,8 +412,10 @@ with tab1:
 with tab2:
     st.header("商品進貨")
     if not st.session_state["is_admin"]:
-        show_login_block()
-    else:
+        # 🔥 未登入則顯示警告
+        st.warning("🔒 **此功能僅限管理員使用**")
+        st.info("請使用左側欄位輸入密碼登入。")
+    else: # 登入後才顯示內容
         df = get_inventory_df()
         existing_cats = sorted(df['分類'].unique().tolist()) if not df.empty else []
         if "未分類" not in existing_cats: existing_cats.insert(0, "未分類")
@@ -483,8 +486,10 @@ with tab2:
 with tab3:
     st.header("商品銷貨")
     if not st.session_state["is_admin"]:
-        show_login_block()
-    else:
+        # 🔥 未登入則顯示警告
+        st.warning("🔒 **此功能僅限管理員使用**")
+        st.info("請使用左側欄位輸入密碼登入。")
+    else: # 登入後才顯示內容
         df = get_inventory_df()
         if not df.empty:
             st.write("🔍 **分類篩選**")
@@ -514,8 +519,10 @@ with tab3:
 with tab4:
     st.header("刪除商品")
     if not st.session_state["is_admin"]:
-        show_login_block()
-    else:
+        # 🔥 未登入則顯示警告
+        st.warning("🔒 **此功能僅限管理員使用**")
+        st.info("請使用左側欄位輸入密碼登入。")
+    else: # 登入後才顯示內容
         df = get_inventory_df()
         if not df.empty:
             if "del_mode" not in st.session_state: st.session_state["del_mode"] = False
@@ -558,8 +565,10 @@ with tab4:
 with tab5:
     st.header("✏️ 編輯資料")
     if not st.session_state["is_admin"]:
-        show_login_block()
-    else:
+        # 🔥 未登入則顯示警告
+        st.warning("🔒 **此功能僅限管理員使用**")
+        st.info("請使用左側欄位輸入密碼登入。")
+    else: # 登入後才顯示內容
         df = get_inventory_df()
         if not df.empty:
             st.write("🔍 **快速篩選 (先選分類，或直接搜尋)**")
@@ -572,7 +581,7 @@ with tab5:
                 search_key = st.text_input("🔍 關鍵字搜尋", key="edit_search_key")
             with col_refresh_t5:
                 st.write(""); st.write("")
-                if st.button("🔄 重新整理", key="refresh_edit_tab"): st.rerun() # 重新整理按鈕
+                if st.button("🔄 重新整理", key="refresh_edit_tab"): st.rerun()
             
 
             # --- 篩選邏輯 ---
@@ -646,74 +655,8 @@ with tab5:
 with tab6:
     st.header("🏭 廠商通訊錄")
     if not st.session_state["is_admin"]:
-        show_login_block()
-    else:
-        v_df = get_vendors_df()
-        if not v_df.empty:
-            for col in v_df.columns:
-                v_df[col] = v_df[col].astype(str)
-            st.dataframe(
-                v_df,
-                use_container_width=True,
-                column_config={
-                    "廠商名稱": st.column_config.TextColumn("廠商名稱", width="medium"),
-                    "電話": st.column_config.TextColumn("電話", width="small"),
-                }
-            )
-        else:
-            st.info("目前無廠商資料。")
-        
-        st.divider()
-        
-        t6_add, t6_edit, t6_del = st.tabs(["➕ 新增", "✏️ 編輯", "❌ 刪除"])
-        
-        with t6_add:
-            st.subheader("新增廠商")
-            with st.form("add_vendor_form"):
-                v_name = st.text_input("廠商名稱 (必填)")
-                v_contact = st.text_input("聯絡人")
-                v_phone = st.text_input("電話")
-                v_addr = st.text_input("地址")
-                v_rem = st.text_area("備註")
-                
-                submitted = st.form_submit_button("確認新增", type="primary")
-                if submitted:
-                    if v_name:
-                        current_vendors = v_df['廠商名稱'].tolist() if not v_df.empty else []
-                        if v_name in current_vendors:
-                            st.error(f"❌ 廠商 '{v_name}' 已存在！")
-                        else:
-                            add_vendor(v_name, v_contact, v_phone, v_addr, v_rem)
-                            st.rerun()
-                    else:
-                        st.warning("請輸入名稱")
-
-        with t6_edit:
-            st.subheader("編輯廠商資料")
-            if not v_df.empty:
-                edit_v_name = st.selectbox("選擇編輯對象", v_df['廠商名稱'].unique(), key="edit_v_sel_vendor") 
-                v_data = v_df[v_df['廠商名稱'] == edit_v_name].iloc[0]
-                
-                with st.form("edit_vendor_form"):
-                    st.info(f"正在編輯：**{edit_v_name}**")
-                    ev_contact = st.text_input("聯絡人", value=v_data.get('聯絡人', ''))
-                    ev_phone = st.text_input("電話", value=v_data.get('電話', ''))
-                    ev_addr = st.text_input("地址", value=v_data.get('地址', ''))
-                    ev_rem = st.text_area("備註", value=v_data.get('備註', ''))
-                    
-                    if st.form_submit_button("儲存修改", type="primary"):
-                        with st.spinner("更新中..."):
-                            update_vendor(edit_v_name, ev_contact, ev_phone, ev_addr, ev_rem)
-                            st.rerun()
-            else:
-                st.info("無廠商可編輯")
-
-        with t6_del:
-            st.subheader("刪除廠商")
-            if not v_df.empty:
-                del_v_name = st.selectbox("選擇刪除對象", v_df['廠商名稱'].unique(), key="del_v_sel_vendor") 
-                if st.button("確認刪除", type="primary", key="del_v_btn"):
-                    delete_vendor(del_v_name)
-                    st.rerun()
-            else:
-                st.info("無廠商可刪除")
+        # 🔥 未登入則顯示警告
+        st.warning("🔒 **此功能僅限管理員使用**")
+        st.info("請使用左側欄位輸入密碼登入。")
+    else: # 登入後才顯示內容
+        v_df = get_vendor
