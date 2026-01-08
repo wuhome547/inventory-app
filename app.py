@@ -22,27 +22,47 @@ def get_gspread_client():
         return client
     except Exception as e:
         st.error(f"❌ Google 登入失敗: {e}")
+        st.info("請檢查：1. `secrets.toml` 中的 `gcp_service_account` 設定是否正確。2. 您的 Google Cloud 專案是否啟用了 Google Sheets API。3. 服務帳號是否擁有試算表的『編輯者』權限。")
         return None
 
 def get_worksheet(sheet_name="sheet1"):
     client = get_gspread_client()
-    if not client: return None
+    if not client: return None # 如果 client 建立失敗，直接返回 None
+    
     try:
-        if sheet_name == "sheet1":
-            return client.open(SPREADSHEET_NAME).sheet1
-        else:
-            return client.open(SPREADSHEET_NAME).worksheet(sheet_name)
-    except gspread.exceptions.WorksheetNotFound:
-        if sheet_name == "vendors":
-            try:
-                sh = client.open(SPREADSHEET_NAME)
-                new_ws = sh.add_worksheet(title="vendors", rows="100", cols="10")
-                new_ws.append_row(["廠商名稱", "聯絡人", "電話", "地址", "備註"])
-                st.toast("已自動建立 'vendors' 分頁！")
-                return new_ws
-            except: return None
+        sh = client.open(SPREADSHEET_NAME) # 開啟試算表
+        
+        # 嘗試取得指定的工作表
+        try:
+            if sheet_name == "sheet1": 
+                return sh.sheet1 # 預設主工作表
+            else:
+                return sh.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            # 如果是 'vendors' 工作表找不到，自動建立
+            if sheet_name == "vendors":
+                try:
+                    new_ws = sh.add_worksheet(title="vendors", rows="100", cols="10")
+                    new_ws.append_row(["廠商名稱", "聯絡人", "電話", "地址", "備註"])
+                    st.toast("已自動建立 'vendors' 分頁！")
+                    return new_ws
+                except Exception as e:
+                    st.error(f"❌ 自動建立 'vendors' 分頁失敗: {e}")
+                    return None
+            else:
+                st.error(f"❌ 找不到工作表 '{sheet_name}'。請確認名稱是否正確。")
+                return None
+
+    except gspread.exceptions.SpreadsheetNotFound:
+        st.error(f"❌ 找不到試算表 '{SPREADSHEET_NAME}'。請確認試算表名稱是否正確，並已共用給服務帳號。")
         return None
-    except Exception:
+    except gspread.exceptions.APIError as e:
+        st.error(f"❌ Google Sheets API 錯誤: {e}")
+        st.warning("⚠️ Google API 連線忙碌或權限問題，正在清除快取。請稍等 1 分鐘後刷新頁面。")
+        st.cache_resource.clear() 
+        return None
+    except Exception as e:
+        st.error(f"❌ 發生未知錯誤: {e}")
         st.cache_resource.clear()
         return None
 
@@ -82,11 +102,17 @@ def logout():
     st.session_state["is_admin"] = False
     st.rerun()
 
-# --- 核心功能 ---
+# 🔥 show_login_block() 函式已移除，邏輯直接內嵌於每個 Tab
+
+
+# --- 核心功能 (資料讀取與處理) ---
 
 def get_inventory_df():
     sheet = get_worksheet("sheet1")
-    if sheet:
+    if sheet is None: # 如果工作表無法取得，返回空 DataFrame
+        return pd.DataFrame()
+    
+    try:
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
         if '商品名稱' in df.columns: df['商品名稱'] = df['商品名稱'].astype(str).str.strip()
@@ -99,7 +125,15 @@ def get_inventory_df():
         df['分類'] = df['分類'].replace('', '未分類').replace('nan', '未分類')
         df['廠商'] = df['廠商'].astype(str).replace('nan', '')
         return df
-    return pd.DataFrame()
+    except gspread.exceptions.APIError as e:
+        st.error(f"❌ 無法讀取庫存資料 (Google Sheets API 錯誤): {e}")
+        st.warning("⚠️ 讀取資料失敗，可能是 Google API 暫時性錯誤、配額限制，或服務帳號對此工作表沒有讀取權限。請檢查試算表共用設定，並稍後重試。")
+        st.cache_resource.clear() 
+        return pd.DataFrame() # 返回空 DataFrame 避免後續錯誤
+    except Exception as e:
+        st.error(f"❌ 讀取庫存資料時發生未知錯誤: {e}")
+        return pd.DataFrame()
+
 
 def find_product_cell(sheet, name):
     target_name = str(name).strip()
@@ -204,8 +238,19 @@ def update_product_info(old_name, new_name, new_qty, new_price, new_url_str, new
 
 def get_vendors_df():
     sheet = get_worksheet("vendors")
-    if sheet: return pd.DataFrame(sheet.get_all_records())
-    return pd.DataFrame()
+    if sheet is None: # 如果工作表無法取得，返回空 DataFrame
+        return pd.DataFrame()
+    try:
+        data = sheet.get_all_records()
+        return pd.DataFrame(data)
+    except gspread.exceptions.APIError as e:
+        st.error(f"❌ 無法讀取廠商資料 (Google Sheets API 錯誤): {e}")
+        st.warning("⚠️ 讀取資料失敗，可能是 Google API 暫時性錯誤、配額限制，或服務帳號對此工作表沒有讀取權限。請檢查試算表共用設定，並稍後重試。")
+        st.cache_resource.clear()
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"❌ 讀取廠商資料時發生未知錯誤: {e}")
+        return pd.DataFrame()
 
 def add_vendor(name, contact, phone, address, remarks):
     sheet = get_worksheet("vendors")
@@ -273,6 +318,8 @@ st.title("吉宏車業雲端進銷存系統") # 標題變更
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🖼️ 庫存圖牆", "➕ 進貨 (限)", "➖ 銷貨 (限)", "❌ 刪除 (限)", "✏️ 編輯 (限)", "🏭 廠商名錄 (限)"])
 
 # --- 泛用型無限分層篩選器 UI 模組 ---
+# ⚠️ 這裡的 show_login_block() 已經拿掉了 st.stop()
+# 所以現在才能在 Tab 內直接呼叫，而不會讓整個程式停止
 def generate_category_filters(df_full, current_key_prefix):
     """
     生成無限層級的分類篩選器。
@@ -412,7 +459,7 @@ with tab2:
     if not st.session_state["is_admin"]:
         st.warning("🔒 **此功能僅限管理員使用**")
         st.info("請使用左側欄位輸入密碼登入。")
-    else:
+    else: # 登入後才顯示內容
         df = get_inventory_df()
         existing_cats = sorted(df['分類'].unique().tolist()) if not df.empty else []
         if "未分類" not in existing_cats: existing_cats.insert(0, "未分類")
